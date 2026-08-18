@@ -28,6 +28,12 @@ export interface Profile {
   /** Epoch ms the life timer last ticked. */
   livesUpdatedAt: number;
   soundOn: boolean;
+  /** Developer tools unlocked (see the Dev tab in the shop). */
+  dev?: boolean;
+  /** Purchases stop deducting coins. */
+  infiniteCoins?: boolean;
+  /** Lives are never spent. */
+  infiniteLives?: boolean;
 }
 
 function defaultProfile(): Profile {
@@ -41,6 +47,9 @@ function defaultProfile(): Profile {
     lives: 5,
     livesUpdatedAt: Date.now(),
     soundOn: true,
+    dev: false,
+    infiniteCoins: false,
+    infiniteLives: false,
   };
 }
 
@@ -109,6 +118,7 @@ export function msToNextLife(profile: Profile, now = Date.now()): number {
 
 export function spendLife(profile: Profile): boolean {
   refillLives(profile);
+  if (profile.infiniteLives) return true;
   if (profile.lives <= 0) return false;
   if (profile.lives >= maxLives(profile.upgrades)) profile.livesUpdatedAt = Date.now();
   profile.lives--;
@@ -150,16 +160,20 @@ export function buyUpgrade(profile: Profile, id: UpgradeId): boolean {
   // Star gate is enforced in the model, not only in the shop UI.
   if (totalStars(profile) < def.starsRequired) return false;
   const cost = def.cost(rank);
-  if (profile.coins < cost) return false;
-  profile.coins -= cost;
+  if (!profile.infiniteCoins) {
+    if (profile.coins < cost) return false;
+    profile.coins -= cost;
+  }
   profile.upgrades[id] = rank + 1;
   if (id === 'vitality') profile.lives = Math.min(maxLives(profile.upgrades), profile.lives + 1);
   return true;
 }
 
 export function buyItem(profile: Profile, id: BoosterId | PowerupId, cost: number): boolean {
-  if (profile.coins < cost) return false;
-  profile.coins -= cost;
+  if (!profile.infiniteCoins) {
+    if (profile.coins < cost) return false;
+    profile.coins -= cost;
+  }
   profile.inventory[id] = (profile.inventory[id] ?? 0) + 1;
   return true;
 }
@@ -170,6 +184,6 @@ export function countItem(profile: Profile, id: BoosterId | PowerupId): number {
 
 export function consumeItem(profile: Profile, id: BoosterId | PowerupId): boolean {
   if (countItem(profile, id) <= 0) return false;
-  profile.inventory[id]--;
+  if (!profile.infiniteCoins) profile.inventory[id]--;
   return true;
 }

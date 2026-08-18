@@ -130,6 +130,29 @@ The engine is pure logic and returns an animation timeline (`Step[]`) that the
 renderer replays; it has no DOM dependency, which is what lets the simulator play
 thousands of levels headlessly.
 
+## Dev tools
+
+Tap the ◆ beside the title **seven times** to reveal a 🛠 Dev tab in the shop.
+Tapping seven times again hides it. Everything there is local to that browser
+profile — nothing is shared, synced, or visible to other players.
+
+- **Infinite coins** — purchases stop deducting, and power-ups are never used up.
+- **Infinite lives** — levels never cost a life, and start even at zero.
+- One-off actions: add a million coins, stock every item, unlock all 1000
+  levels, max every upgrade, refill lives, win the level in progress.
+
+The same tools are on the console, which is easier on desktop:
+
+```js
+gemQuest.dev.help()        // list every command
+gemQuest.dev.infinite()    // coins, items and lives all stop being spent
+gemQuest.dev.coins(50000)  // one-off top-up
+gemQuest.dev.unlockAll()
+gemQuest.dev.maxUpgrades()
+gemQuest.dev.goto(750)     // jump straight to a level
+gemQuest.dev.win()         // clear the level in progress
+```
+
 ## Publishing
 
 `npm run deploy` builds a minified, self-contained copy into `docs/`, which

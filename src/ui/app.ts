@@ -52,7 +52,7 @@ import {
 } from '../game/save.js';
 
 type ScreenId = 'map' | 'shop' | 'game';
-type ShopTab = 'boosters' | 'powerups' | 'upgrades';
+type ShopTab = 'boosters' | 'powerups' | 'upgrades' | 'dev';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -73,6 +73,10 @@ export class App {
   private chosenBoosters: BoosterId[] = [];
   private armedPowerup: PowerupId | null = null;
   private freeSwapFirst: Pos | null = null;
+
+  /** Taps on the brand mark; seven in a row reveals the dev tools. */
+  private devTaps = 0;
+  private devTapAt = 0;
 
   private lastFrame = 0;
   private idleTime = 0;
@@ -135,6 +139,24 @@ export class App {
       this.show('shop');
     });
     $('chip-lives').addEventListener('click', () => this.showLivesInfo());
+
+    // Seven quick taps on the ◆ reveals the dev tools. It has no other
+    // action, so this cannot fire by accident during normal play.
+    document.querySelector('.brand-mark')?.addEventListener('click', () => {
+      const now = Date.now();
+      this.devTaps = now - this.devTapAt < 900 ? this.devTaps + 1 : 1;
+      this.devTapAt = now;
+      if (this.devTaps < 7) return;
+      this.devTaps = 0;
+      this.profile.dev = !this.profile.dev;
+      saveProfile(this.profile);
+      this.toast(this.profile.dev ? '🛠 Dev tools unlocked' : 'Dev tools hidden');
+      if (this.profile.dev) {
+        this.shopTab = 'dev';
+        this.renderShop();
+        this.show('shop');
+      }
+    });
     $('chip-stars').addEventListener('click', () => {
       this.shopTab = 'upgrades';
       this.renderShop();
@@ -155,13 +177,14 @@ export class App {
 
   private refreshWallet(): void {
     refillLives(this.profile);
-    $('coins-count').textContent = this.profile.coins.toLocaleString();
+    const coinText = this.profile.infiniteCoins ? '∞' : this.profile.coins.toLocaleString();
+    $('coins-count').textContent = coinText;
     $('stars-count').textContent = String(totalStars(this.profile));
-    $('lives-count').textContent = String(this.profile.lives);
-    $('shop-coins').textContent = this.profile.coins.toLocaleString();
+    $('lives-count').textContent = this.profile.infiniteLives ? '∞' : String(this.profile.lives);
+    $('shop-coins').textContent = coinText;
 
     const timer = $('lives-timer');
-    const ms = msToNextLife(this.profile);
+    const ms = this.profile.infiniteLives ? 0 : msToNextLife(this.profile);
     if (ms > 0) {
       const total = Math.ceil(ms / 1000);
       timer.textContent = `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
@@ -313,6 +336,7 @@ export class App {
       { id: 'powerups', label: 'Power-ups' },
       { id: 'upgrades', label: 'Upgrades' },
     ];
+    if (this.profile.dev) tabDefs.push({ id: 'dev', label: '🛠 Dev' });
     for (const tab of tabDefs) {
       const btn = document.createElement('button');
       btn.className = 'shop-tab';
@@ -329,6 +353,10 @@ export class App {
     const body = $('shop-body');
     body.innerHTML = '';
 
+    if (this.shopTab === 'dev') {
+      this.renderDevPanel(body);
+      return;
+    }
     if (this.shopTab === 'upgrades') {
       this.renderUpgrades(body);
       return;
@@ -415,6 +443,208 @@ export class App {
     return card;
   }
 
+  /** Developer tools. Everything here is local to this browser profile. */
+  private renderDevPanel(body: HTMLElement): void {
+    body.appendChild(
+      this.blurbLine(
+        'Local to this browser only — nothing here is shared or synced. ' +
+          'Tap the ◆ seven times again to hide these.',
+      ),
+    );
+
+    const toggles: { label: string; sub: string; key: 'infiniteCoins' | 'infiniteLives' }[] = [
+      {
+        label: 'Infinite coins',
+        sub: 'Purchases never deduct, and power-ups are never used up.',
+        key: 'infiniteCoins',
+      },
+      { label: 'Infinite lives', sub: 'Levels never cost a life.', key: 'infiniteLives' },
+    ];
+
+    body.appendChild(this.sectionTitle('Toggles'));
+    for (const t of toggles) {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.innerHTML = `<div class="card-icon">${t.key === 'infiniteCoins' ? '💰' : '❤️'}</div>
+        <div class="card-body"><div class="card-title">${t.label}</div>
+        <div class="card-sub">${t.sub}</div></div>`;
+      const btn = document.createElement('button');
+      btn.className = 'buy-btn';
+      btn.type = 'button';
+      const on = !!this.profile[t.key];
+      btn.textContent = on ? 'ON' : 'OFF';
+      btn.style.opacity = on ? '1' : '0.6';
+      btn.addEventListener('click', () => {
+        this.profile[t.key] = !this.profile[t.key];
+        saveProfile(this.profile);
+        this.renderShop();
+        this.refreshWallet();
+      });
+      card.appendChild(btn);
+      body.appendChild(card);
+    }
+
+    body.appendChild(this.sectionTitle('Actions'));
+    const actions: { label: string; sub: string; run: () => string }[] = [
+      {
+        label: 'Add 1,000,000 coins',
+        sub: 'One-off top-up, without switching on infinite mode.',
+        run: () => {
+          this.dev.coins(1_000_000);
+          return 'Coins added';
+        },
+      },
+      {
+        label: 'Stock every item',
+        sub: 'Sets all boosters and power-ups to 99.',
+        run: () => {
+          this.dev.items(99);
+          return 'Items stocked';
+        },
+      },
+      {
+        label: 'Unlock all 1000 levels',
+        sub: 'Opens every region on the map. Does not award stars.',
+        run: () => {
+          this.dev.unlockAll();
+          return 'All levels unlocked';
+        },
+      },
+      {
+        label: 'Max every upgrade',
+        sub: 'Sets all twelve upgrades to their top rank, ignoring star gates.',
+        run: () => {
+          this.dev.maxUpgrades();
+          return 'Upgrades maxed';
+        },
+      },
+      {
+        label: 'Refill lives',
+        sub: 'Tops lives back up to your current cap.',
+        run: () => {
+          this.dev.lives();
+          return 'Lives refilled';
+        },
+      },
+      {
+        label: 'Win current level',
+        sub: 'Only works while a level is open.',
+        run: () => (this.dev.win() ? 'Level completed' : 'No level in progress'),
+      },
+    ];
+
+    for (const action of actions) {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.innerHTML = `<div class="card-icon">🛠</div>
+        <div class="card-body"><div class="card-title">${action.label}</div>
+        <div class="card-sub">${action.sub}</div></div>`;
+      const btn = document.createElement('button');
+      btn.className = 'buy-btn';
+      btn.type = 'button';
+      btn.textContent = 'Run';
+      btn.addEventListener('click', () => {
+        const message = action.run();
+        saveProfile(this.profile);
+        this.renderShop();
+        this.refreshWallet();
+        this.toast(message);
+      });
+      card.appendChild(btn);
+      body.appendChild(card);
+    }
+  }
+
+  /**
+   * Console API, mirrored by the Dev tab. Everything is local to this
+   * browser profile: `gemQuest.dev.help()` lists the commands.
+   */
+  get dev() {
+    const self = this;
+    return {
+      help(): string[] {
+        return [
+          'gemQuest.dev.coins(n?)      add coins (default 1,000,000)',
+          'gemQuest.dev.infinite(on?)  never spend coins, items or lives',
+          'gemQuest.dev.items(n?)      stock every booster and power-up',
+          'gemQuest.dev.lives(n?)      refill lives',
+          'gemQuest.dev.unlockAll()    unlock all 1000 levels',
+          'gemQuest.dev.maxUpgrades()  max every upgrade',
+          'gemQuest.dev.goto(id)       open a level',
+          'gemQuest.dev.win()          complete the level in progress',
+          'gemQuest.dev.panel()        show the in-game Dev tab',
+          'gemQuest.dev.reset()        wipe the profile',
+        ];
+      },
+      coins(n = 1_000_000): number {
+        self.profile.coins += n;
+        self.commitDev();
+        return self.profile.coins;
+      },
+      infinite(on = true): boolean {
+        self.profile.infiniteCoins = on;
+        self.profile.infiniteLives = on;
+        self.commitDev();
+        return on;
+      },
+      items(n = 99): void {
+        for (const item of [...BOOSTERS, ...POWERUPS]) self.profile.inventory[item.id] = n;
+        self.commitDev();
+      },
+      lives(n = maxLives(self.profile.upgrades)): number {
+        self.profile.lives = n;
+        self.commitDev();
+        return n;
+      },
+      unlockAll(): void {
+        self.profile.unlocked = TOTAL_LEVELS;
+        self.commitDev();
+      },
+      maxUpgrades(): void {
+        for (const upgrade of UPGRADES) self.profile.upgrades[upgrade.id] = upgrade.maxRank;
+        self.commitDev();
+      },
+      goto(id: number): void {
+        self.profile.unlocked = Math.max(self.profile.unlocked, id);
+        self.commitDev();
+        self.openPreLevel(Math.max(1, Math.min(TOTAL_LEVELS, id)));
+      },
+      win(): boolean {
+        const session = self.session;
+        if (!session || session.state !== 'playing') return false;
+        for (const objective of session.objectives) {
+          (objective as { current: number; done: boolean }).current = objective.target;
+          (objective as { current: number; done: boolean }).done = true;
+        }
+        session.state = 'won';
+        session.leftoverMoves = Math.max(0, session.movesLeft);
+        self.resultShown = true;
+        self.finishLevel();
+        return true;
+      },
+      panel(): void {
+        self.profile.dev = true;
+        self.shopTab = 'dev';
+        self.commitDev();
+        self.renderShop();
+        self.show('shop');
+      },
+      reset(): void {
+        self.profile = resetProfile();
+        self.mapRegion = 0;
+        self.show('map');
+      },
+    };
+  }
+
+  /** Saves and refreshes after a dev change. */
+  private commitDev(): void {
+    saveProfile(this.profile);
+    this.refreshWallet();
+    if (this.screen === 'map') this.renderMap();
+    if (this.screen === 'shop') this.renderShop();
+  }
+
   private blurbLine(text: string): HTMLElement {
     const el = document.createElement('p');
     el.className = 'panel-blurb';
@@ -489,7 +719,9 @@ export class App {
     const mins = Math.ceil(ms / 60000);
     this.openModal(`
       <h2>Lives</h2>
-      <p class="lead">${this.profile.lives} of ${cap} lives.${
+      <p class="lead">${
+        this.profile.infiniteLives ? 'Infinite lives are on (dev).' : `${this.profile.lives} of ${cap} lives.`
+      }${
         ms > 0 ? ` Next life in about ${mins} minute${mins === 1 ? '' : 's'}.` : ' Fully charged.'
       }</p>
       <div class="btn-row"><button class="btn btn-primary" data-close>Got it</button></div>
