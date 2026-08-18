@@ -19,6 +19,12 @@ export interface ResolveContext {
   cascadeBonus: number;
   /** Chance a plain 3-match also yields a rocket. */
   specialLuck: number;
+  /** Chance a four-match yields a bomb instead of a rocket. */
+  bombLuck?: number;
+  /** Extra rings of blockers a detonation damages beyond its blast. */
+  blastRadiusBonus?: number;
+  /** Bonus multiplier on score from blockers and jelly. */
+  furnitureScoreBonus?: number;
   /**
    * Reshuffle whenever fewer than this many legal moves remain. Clears only
    * disturb the cells above them, so a region with no moves can never gain
@@ -28,7 +34,14 @@ export interface ResolveContext {
   minMoves?: number;
 }
 
-export const DEFAULT_CONTEXT: ResolveContext = { cascadeBonus: 0.35, specialLuck: 0, minMoves: 4 };
+export const DEFAULT_CONTEXT: ResolveContext = {
+  cascadeBonus: 0.35,
+  specialLuck: 0,
+  bombLuck: 0,
+  blastRadiusBonus: 0,
+  furnitureScoreBonus: 0,
+  minMoves: 4,
+};
 
 const SCORE_PER_GEM = 60;
 const SCORE_PER_DETONATION = 120;
@@ -367,6 +380,15 @@ export class Board {
     return [{ type: 'swap', a, b, valid: true } as Step, ...this.resolve(ctx, null, [a, b])];
   }
 
+  /** Clears the full row and column through `p` (the Lightning power-up). */
+  lightning(p: Pos, ctx: ResolveContext = DEFAULT_CONTEXT): Step[] {
+    if (!this.playable(p.r, p.c)) return [];
+    const seeds: Pos[] = [];
+    for (let c = 0; c < this.width; c++) if (this.playable(p.r, c)) seeds.push({ r: p.r, c });
+    for (let r = 0; r < this.height; r++) if (this.playable(r, p.c)) seeds.push({ r, c: p.c });
+    return this.resolve(ctx, seeds, []);
+  }
+
   /** Destroys whatever sits at `p` (the Hammer power-up). */
   strike(p: Pos, ctx: ResolveContext = DEFAULT_CONTEXT): Step[] {
     const cell = this.at(p.r, p.c);
@@ -513,8 +535,10 @@ export class Board {
   private specialFor(group: MatchGroup, ctx: ResolveContext): Special {
     if (group.maxH >= 5 || group.maxV >= 5) return Special.Rainbow;
     if (group.maxH >= 3 && group.maxV >= 3) return Special.Bomb;
-    if (group.maxH === 4) return Special.RocketH;
-    if (group.maxV === 4) return Special.RocketV;
+    if (group.maxH === 4 || group.maxV === 4) {
+      if (ctx.bombLuck && this.rng.chance(ctx.bombLuck)) return Special.Bomb;
+      return group.maxH === 4 ? Special.RocketH : Special.RocketV;
+    }
     if (ctx.specialLuck > 0 && this.rng.chance(ctx.specialLuck)) {
       return this.rng.chance(0.5) ? Special.RocketH : Special.RocketV;
     }
@@ -584,7 +608,22 @@ export class Board {
       if (gem.special !== Special.None && !detonated.has(key)) {
         detonated.add(key);
         detonations.push({ pos: p, special: gem.special, color: gem.color });
-        for (const t of this.blastArea(p, gem)) enqueue(t);
+        const area = this.blastArea(p, gem);
+        for (const t of area) enqueue(t);
+        const bonus = ctx.blastRadiusBonus ?? 0;
+        if (bonus > 0) {
+          for (const t of area) {
+            for (let dr = -bonus; dr <= bonus; dr++) {
+              for (let dc = -bonus; dc <= bonus; dc++) {
+                const nb = this.at(t.r + dr, t.c + dc);
+                if (nb && !nb.hole && nb.blocker) {
+                  const nk = this.idx(t.r + dr, t.c + dc);
+                  if (!blockerDamage.has(nk)) blockerDamage.set(nk, 1);
+                }
+              }
+            }
+          }
+        }
       }
       // Ordinary clears chip the crates beside them.
       for (const [dr, dc] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
@@ -607,6 +646,7 @@ export class Board {
       jelly: [],
       unlocked,
       collected: [],
+      defused: [],
       score: 0,
       cascade,
     };
@@ -616,12 +656,13 @@ export class Board {
       const cell = this.cells[key];
       const pos = { r: Math.floor(key / this.width), c: key % this.width };
       step.cleared.push({ pos, gem: cell.gem! });
+      if (cell.gem!.fuse) step.defused.push(pos);
       cell.gem = null;
       raw += SCORE_PER_GEM;
       if (cell.jelly > 0) {
         cell.jelly--;
         step.jelly.push({ pos, layersLeft: cell.jelly });
-        raw += SCORE_PER_JELLY;
+        raw += SCORE_PER_JELLY * (1 + (ctx.furnitureScoreBonus ?? 0));
       }
     }
 
@@ -633,7 +674,7 @@ export class Board {
       const destroyed = cell.blocker.hp <= 0;
       const pos = { r: Math.floor(key / this.width), c: key % this.width };
       step.damaged.push({ pos, kind, hpLeft: Math.max(0, cell.blocker.hp), destroyed });
-      raw += SCORE_PER_BLOCKER;
+      raw += SCORE_PER_BLOCKER * (1 + (ctx.furnitureScoreBonus ?? 0));
       if (destroyed) {
         cell.blocker = null;
         if (cell.jelly > 0) {
@@ -839,6 +880,7 @@ export class Board {
       jelly: [],
       unlocked: [],
       collected,
+      defused: [],
       score: collected.length * SCORE_PER_INGREDIENT,
       cascade,
     };
@@ -948,6 +990,39 @@ export class Board {
   /* ---------------------------------------------------------------- *
    * Level-goal queries
    * ---------------------------------------------------------------- */
+
+  /**
+   * Advances every fuse by one player move. Returns the positions whose fuse
+   * ran out — any one of them loses the level.
+   */
+  tickFuses(): Pos[] {
+    const expired: Pos[] = [];
+    for (let r = 0; r < this.height; r++) {
+      for (let c = 0; c < this.width; c++) {
+        const gem = this.gemAt(r, c);
+        if (!gem || !gem.fuse) continue;
+        gem.fuse--;
+        if (gem.fuse <= 0) expired.push({ r, c });
+      }
+    }
+    return expired;
+  }
+
+  /** Lowest fuse still on the board, or null when there are none. */
+  lowestFuse(): number | null {
+    let lowest: number | null = null;
+    for (const cell of this.cells) {
+      const fuse = cell.gem?.fuse;
+      if (fuse && (lowest === null || fuse < lowest)) lowest = fuse;
+    }
+    return lowest;
+  }
+
+  fusesRemaining(): number {
+    let n = 0;
+    for (const cell of this.cells) if (cell.gem?.fuse) n++;
+    return n;
+  }
 
   jellyRemaining(): number {
     let total = 0;

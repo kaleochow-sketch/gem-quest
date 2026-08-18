@@ -24,6 +24,11 @@ export const enum GemKind {
 
 export interface Gem {
   kind: GemKind;
+  /**
+   * Countdown on a fuse gem: ticks down once per player move and ends the
+   * level if it reaches zero. 0 means this gem carries no fuse.
+   */
+  fuse?: number;
   /** Palette index 0..colorCount-1. Ignored for ingredients and rainbows. */
   color: number;
   special: Special;
@@ -86,6 +91,8 @@ export interface ClearStep {
   unlocked: Pos[];
   /** Ingredients that reached an exit. */
   collected: { pos: Pos; gem: Gem }[];
+  /** Fuse gems defused by this clear. */
+  defused: Pos[];
   score: number;
   /** 1 for the initial match, 2+ for each cascade. */
   cascade: number;

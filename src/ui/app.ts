@@ -3,12 +3,17 @@ import { Pos } from '../engine/types.js';
 import {
   EPISODES,
   LEVELS_PER_EPISODE,
+  LEVELS_PER_REGION,
   LevelDef,
   Objective,
+  REGIONS,
   TOTAL_LEVELS,
+  TOTAL_REGIONS,
   allLevels,
   getLevel,
   isBossLevel,
+  isRegionFinale,
+  regionOf,
 } from '../game/levels.js';
 import { LevelSession } from '../game/session.js';
 import {
@@ -17,12 +22,17 @@ import {
   POWERUPS,
   PowerupId,
   UPGRADES,
+  UpgradeDef,
   boosterExtraMoves,
   boosterSpecials,
   coinReward,
   contextFor,
   extraMovesFrom,
+  fuseBonus,
+  lifeRefundChance,
   maxLives,
+  powerupRefundChance,
+  starlightSpecials,
 } from '../game/upgrades.js';
 import {
   Profile,
@@ -42,7 +52,7 @@ import {
 } from '../game/save.js';
 
 type ScreenId = 'map' | 'shop' | 'game';
-type ShopTab = 'shop' | 'upgrades';
+type ShopTab = 'boosters' | 'powerups' | 'upgrades';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -57,8 +67,9 @@ export class App {
   private session: LevelSession | null = null;
 
   private screen: ScreenId = 'map';
-  private shopTab: ShopTab = 'shop';
+  private shopTab: ShopTab = 'boosters';
   private levelId = 1;
+  private mapRegion = 0;
   private chosenBoosters: BoosterId[] = [];
   private armedPowerup: PowerupId | null = null;
   private freeSwapFirst: Pos | null = null;
@@ -81,6 +92,7 @@ export class App {
     this.canvas = $<HTMLCanvasElement>('board');
     this.renderer = new GameRenderer(this.canvas);
     this.levelId = Math.min(this.profile.unlocked, TOTAL_LEVELS);
+    this.mapRegion = regionOf(this.levelId);
 
     this.bindChrome();
     this.bindBoardInput();
@@ -106,7 +118,7 @@ export class App {
         const target = el.dataset.goto!;
         if (target === 'map') this.show('map');
         else {
-          this.shopTab = target as ShopTab;
+          this.shopTab = target === 'upgrades' ? 'upgrades' : 'boosters';
           this.renderShop();
           this.show('shop');
         }
@@ -118,11 +130,16 @@ export class App {
     });
     $('btn-quit').addEventListener('click', () => this.confirmQuit());
     $('chip-coins').addEventListener('click', () => {
-      this.shopTab = 'shop';
+      this.shopTab = 'boosters';
       this.renderShop();
       this.show('shop');
     });
     $('chip-lives').addEventListener('click', () => this.showLivesInfo());
+    $('chip-stars').addEventListener('click', () => {
+      this.shopTab = 'upgrades';
+      this.renderShop();
+      this.show('shop');
+    });
   }
 
   private show(screen: ScreenId): void {
@@ -153,6 +170,11 @@ export class App {
     }
   }
 
+  /** Drives the ambient background colour. */
+  private setHue(hue: number): void {
+    document.documentElement.style.setProperty('--ep-hue', String(hue));
+  }
+
   private toast(message: string): void {
     const el = document.createElement('div');
     el.className = 'toast';
@@ -162,31 +184,80 @@ export class App {
   }
 
   /* ---------------------------------------------------------------- *
-   * Level map
+   * Level map — one region at a time, since there are a thousand levels
    * ---------------------------------------------------------------- */
 
   private renderMap(): void {
+    this.mapRegion = Math.min(TOTAL_REGIONS - 1, Math.max(0, this.mapRegion));
+    this.setHue(REGIONS[this.mapRegion].hue);
+    this.renderRegionStrip();
+
     const host = $('map-scroll');
     host.innerHTML = '';
     const levels = allLevels();
-    // A gentle zig-zag so the list reads as a path rather than a table.
+    const firstId = this.mapRegion * LEVELS_PER_REGION + 1;
     const offsets = [0, 26, 44, 26, 0, -26, -44, -26];
 
-    for (let e = 0; e < EPISODES.length; e++) {
+    for (let e = 0; e < LEVELS_PER_REGION / LEVELS_PER_EPISODE; e++) {
+      const episodeIndex = this.mapRegion * 10 + e;
+      const info = EPISODES[episodeIndex];
+
       const head = document.createElement('div');
       head.className = 'episode-head';
-      head.innerHTML = `<span>${e + 1}. ${EPISODES[e].name}</span>`;
+      head.style.setProperty('--ep-hue', String(info.hue));
+      head.innerHTML = `<span>${episodeIndex + 1}. ${info.name}</span>`;
       host.appendChild(head);
 
+      const track = document.createElement('div');
+      track.className = 'map-track';
       for (let i = 0; i < LEVELS_PER_EPISODE; i++) {
-        const def = levels[e * LEVELS_PER_EPISODE + i];
-        host.appendChild(this.makeNode(def, offsets[(def.id - 1) % offsets.length]));
+        const def = levels[firstId - 1 + e * LEVELS_PER_EPISODE + i];
+        track.appendChild(this.makeNode(def, offsets[(def.id - 1) % offsets.length]));
       }
+      host.appendChild(track);
     }
 
     requestAnimationFrame(() => {
       const current = host.querySelector<HTMLElement>('[data-state="current"]');
       current?.scrollIntoView({ block: 'center' });
+    });
+  }
+
+  private renderRegionStrip(): void {
+    const strip = $('region-strip');
+    strip.innerHTML = '';
+    const playerRegion = regionOf(Math.min(this.profile.unlocked, TOTAL_LEVELS));
+
+    REGIONS.forEach((region, i) => {
+      const firstId = i * LEVELS_PER_REGION + 1;
+      const locked = firstId > this.profile.unlocked;
+      const chip = document.createElement('button');
+      chip.className = 'region-chip';
+      chip.type = 'button';
+      chip.dataset.on = String(i === this.mapRegion);
+      chip.dataset.locked = String(locked);
+      chip.style.setProperty('--ep-hue', String(region.hue));
+
+      let stars = 0;
+      for (let id = firstId; id < firstId + LEVELS_PER_REGION; id++) {
+        stars += starsFor(this.profile, id);
+      }
+      chip.innerHTML = `<strong>${region.name}</strong><small>${
+        locked ? 'locked' : `${stars}/${LEVELS_PER_REGION * 3} ★`
+      }</small>`;
+      chip.addEventListener('click', () => {
+        if (locked) {
+          this.toast(`Reach level ${firstId} to open ${region.name}`);
+          return;
+        }
+        this.mapRegion = i;
+        this.renderMap();
+      });
+      strip.appendChild(chip);
+    });
+
+    requestAnimationFrame(() => {
+      strip.children[playerRegion]?.scrollIntoView({ inline: 'center', block: 'nearest' });
     });
   }
 
@@ -204,13 +275,14 @@ export class App {
     node.style.transform = `translateX(${offset}px)`;
     node.dataset.state = !unlocked ? 'locked' : done ? 'done' : 'current';
     node.dataset.boss = String(isBossLevel(def.id));
+    node.dataset.finale = String(isRegionFinale(def.id));
 
     const pips = [0, 1, 2, 3, 4]
       .map((i) => `<i data-on="${def.difficulty * 5 > i ? 'true' : 'false'}"></i>`)
       .join('');
 
     node.innerHTML = `
-      ${isBossLevel(def.id) ? '<div class="node-boss-tag">BOSS</div>' : ''}
+      ${isRegionFinale(def.id) ? '<div class="node-tag node-tag-finale">FINALE</div>' : isBossLevel(def.id) ? '<div class="node-tag">BOSS</div>' : ''}
       <div class="node-num">${def.id}</div>
       <div class="node-stars">${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}</div>
       <div class="node-pips">${pips}</div>
@@ -232,57 +304,122 @@ export class App {
    * ---------------------------------------------------------------- */
 
   private renderShop(): void {
-    $('shop-title').textContent = this.shopTab === 'shop' ? 'Shop' : 'Upgrades';
+    $('shop-title').textContent = this.shopTab === 'upgrades' ? 'Upgrades' : 'Shop';
+
+    const tabs = $('shop-tabs');
+    tabs.innerHTML = '';
+    const tabDefs: { id: ShopTab; label: string }[] = [
+      { id: 'boosters', label: 'Boosters' },
+      { id: 'powerups', label: 'Power-ups' },
+      { id: 'upgrades', label: 'Upgrades' },
+    ];
+    for (const tab of tabDefs) {
+      const btn = document.createElement('button');
+      btn.className = 'shop-tab';
+      btn.type = 'button';
+      btn.dataset.on = String(this.shopTab === tab.id);
+      btn.textContent = tab.label;
+      btn.addEventListener('click', () => {
+        this.shopTab = tab.id;
+        this.renderShop();
+      });
+      tabs.appendChild(btn);
+    }
+
     const body = $('shop-body');
     body.innerHTML = '';
 
     if (this.shopTab === 'upgrades') {
-      body.appendChild(this.sectionTitle('Permanent upgrades'));
-      for (const upgrade of UPGRADES) {
-        const rank = this.profile.upgrades[upgrade.id];
-        const maxed = rank >= upgrade.maxRank;
-        const cost = upgrade.cost(rank);
-        const card = document.createElement('div');
-        card.className = 'card';
-        card.innerHTML = `
-          <div class="card-icon">${upgrade.icon}</div>
-          <div class="card-body">
-            <div class="card-title">${upgrade.name} <span class="owned">${rank}/${upgrade.maxRank}</span></div>
-            <div class="card-sub">${upgrade.describe(Math.max(1, rank + (maxed ? 0 : 1)))}</div>
-            <div class="rank-track">${Array.from({ length: upgrade.maxRank }, (_, i) => `<i data-on="${i < rank}"></i>`).join('')}</div>
-          </div>
-        `;
-        const btn = document.createElement('button');
-        btn.className = 'buy-btn';
-        btn.type = 'button';
-        btn.innerHTML = maxed ? 'MAX' : `<span class="coin"></span> ${cost}`;
-        btn.disabled = maxed || this.profile.coins < cost;
-        btn.addEventListener('click', () => {
-          if (buyUpgrade(this.profile, upgrade.id)) {
-            saveProfile(this.profile);
-            this.toast(`${upgrade.name} upgraded!`);
-            this.renderShop();
-            this.refreshWallet();
-          }
-        });
-        card.appendChild(btn);
-        body.appendChild(card);
-      }
-
-      const reset = document.createElement('button');
-      reset.className = 'btn';
-      reset.type = 'button';
-      reset.style.marginTop = '18px';
-      reset.textContent = 'Reset all progress';
-      reset.addEventListener('click', () => this.confirmReset());
-      body.appendChild(reset);
+      this.renderUpgrades(body);
       return;
     }
 
-    body.appendChild(this.sectionTitle('Pre-level boosters'));
-    for (const item of BOOSTERS) body.appendChild(this.shopCard(item.id, item.name, item.icon, item.blurb, item.cost));
-    body.appendChild(this.sectionTitle('In-level power-ups'));
-    for (const item of POWERUPS) body.appendChild(this.shopCard(item.id, item.name, item.icon, item.blurb, item.cost));
+    const items = this.shopTab === 'boosters' ? BOOSTERS : POWERUPS;
+    body.appendChild(
+      this.blurbLine(
+        this.shopTab === 'boosters'
+          ? 'Chosen before a level starts. One use each.'
+          : 'Used during a level. None of them cost a move.',
+      ),
+    );
+    for (const item of items) {
+      body.appendChild(this.shopCard(item.id, item.name, item.icon, item.blurb, item.cost));
+    }
+  }
+
+  private renderUpgrades(body: HTMLElement): void {
+    const stars = totalStars(this.profile);
+    body.appendChild(this.blurbLine(`Permanent, and applied to every level. You have ${stars} ★.`));
+
+    const branches: { id: UpgradeDef['branch']; label: string }[] = [
+      { id: 'power', label: 'Power' },
+      { id: 'fortune', label: 'Fortune' },
+      { id: 'endurance', label: 'Endurance' },
+    ];
+
+    for (const branch of branches) {
+      body.appendChild(this.sectionTitle(branch.label));
+      for (const upgrade of UPGRADES.filter((u) => u.branch === branch.id)) {
+        body.appendChild(this.upgradeCard(upgrade, stars));
+      }
+    }
+
+    const reset = document.createElement('button');
+    reset.className = 'btn';
+    reset.type = 'button';
+    reset.style.marginTop = '18px';
+    reset.textContent = 'Reset all progress';
+    reset.addEventListener('click', () => this.confirmReset());
+    body.appendChild(reset);
+  }
+
+  private upgradeCard(upgrade: UpgradeDef, stars: number): HTMLElement {
+    const rank = this.profile.upgrades[upgrade.id] ?? 0;
+    const maxed = rank >= upgrade.maxRank;
+    const cost = upgrade.cost(rank);
+    const gated = stars < upgrade.starsRequired;
+
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.dataset.locked = String(gated);
+    card.innerHTML = `
+      <div class="card-icon">${upgrade.icon}</div>
+      <div class="card-body">
+        <div class="card-title">${upgrade.name} <span class="owned">${rank}/${upgrade.maxRank}</span></div>
+        <div class="card-sub">${
+          gated
+            ? `Needs ${upgrade.starsRequired} ★ to unlock`
+            : upgrade.describe(maxed ? rank : rank + 1)
+        }</div>
+        <div class="rank-track">${Array.from(
+          { length: upgrade.maxRank },
+          (_, i) => `<i data-on="${i < rank}"></i>`,
+        ).join('')}</div>
+      </div>
+    `;
+
+    const btn = document.createElement('button');
+    btn.className = 'buy-btn';
+    btn.type = 'button';
+    btn.innerHTML = maxed ? 'MAX' : gated ? `🔒 ${upgrade.starsRequired}★` : `<span class="coin"></span> ${cost}`;
+    btn.disabled = maxed || gated || this.profile.coins < cost;
+    btn.addEventListener('click', () => {
+      if (buyUpgrade(this.profile, upgrade.id)) {
+        saveProfile(this.profile);
+        this.toast(`${upgrade.name} → rank ${this.profile.upgrades[upgrade.id]}`);
+        this.renderShop();
+        this.refreshWallet();
+      }
+    });
+    card.appendChild(btn);
+    return card;
+  }
+
+  private blurbLine(text: string): HTMLElement {
+    const el = document.createElement('p');
+    el.className = 'panel-blurb';
+    el.textContent = text;
+    return el;
   }
 
   private sectionTitle(text: string): HTMLElement {
@@ -340,6 +477,12 @@ export class App {
     $('overlay').dataset.open = 'false';
   }
 
+  private wireClose(): void {
+    $('modal')
+      .querySelectorAll<HTMLElement>('[data-close]')
+      .forEach((el) => el.addEventListener('click', () => this.closeModal()));
+  }
+
   private showLivesInfo(): void {
     const cap = maxLives(this.profile.upgrades);
     const ms = msToNextLife(this.profile);
@@ -354,12 +497,6 @@ export class App {
     this.wireClose();
   }
 
-  private wireClose(): void {
-    $('modal')
-      .querySelectorAll<HTMLElement>('[data-close]')
-      .forEach((el) => el.addEventListener('click', () => this.closeModal()));
-  }
-
   private confirmReset(): void {
     this.openModal(`
       <h2>Reset progress?</h2>
@@ -372,6 +509,7 @@ export class App {
     this.wireClose();
     $('do-reset').addEventListener('click', () => {
       this.profile = resetProfile();
+      this.mapRegion = 0;
       this.closeModal();
       this.renderShop();
       this.show('map');
@@ -382,7 +520,7 @@ export class App {
   private confirmQuit(): void {
     this.openModal(`
       <h2>Leave level?</h2>
-      <p class="lead">Your progress on this level will be lost, but the life you spent is not refunded.</p>
+      <p class="lead">Your progress on this level will be lost, and the life you spent is not refunded.</p>
       <div class="btn-row">
         <button class="btn" data-close>Keep playing</button>
         <button class="btn btn-primary" id="do-quit">Quit</button>
@@ -413,15 +551,22 @@ export class App {
       }>
         ${owned ? `<b>${owned}</b>` : ''}
         <span>${b.icon}</span>${b.name}
-        <small>${owned ? 'tap to use' : 'none owned'}</small>
       </button>`;
     }).join('');
 
+    const hazards: string[] = [];
+    if (def.fuses) hazards.push(`${def.fuses} fuse gem${def.fuses === 1 ? '' : 's'}`);
+    if (def.locks) hazards.push(`${def.locks} chained gems`);
+    if (def.stones) hazards.push(`${def.stones} stones`);
+    if (def.colorCount >= 7) hazards.push('7 colours');
+
     this.openModal(`
+      <div class="modal-tag" style="--ep-hue:${EPISODES[def.episode].hue}">${def.regionName} · ${def.episodeName}</div>
       <h2>Level ${def.id}</h2>
-      <p class="lead">${def.episodeName}${isBossLevel(def.id) ? ' · Boss' : ''} · ${def.moves} moves</p>
+      <p class="lead">${isRegionFinale(def.id) ? 'Region finale · ' : isBossLevel(def.id) ? 'Boss · ' : ''}${def.moves} moves</p>
       <div class="star-row">${[0, 1, 2].map((i) => `<i data-on="${i < stars}">★</i>`).join('')}</div>
       <div class="goal-list">${def.objectives.map((o) => this.goalCard(o, def)).join('')}</div>
+      ${hazards.length ? `<p class="hazards">⚠ ${hazards.join(' · ')}</p>` : ''}
       <div class="section-title" style="margin:6px 0 4px">Boosters</div>
       <div class="booster-grid">${boosters}</div>
       <div class="btn-row">
@@ -463,7 +608,9 @@ export class App {
         return { icon: '🏆', label: `Score ${objective.target.toLocaleString()}` };
       case 'collect':
         return {
-          icon: `<span class="goal-swatch" style="background:${GEM_COLORS[(objective.color ?? 0) % GEM_COLORS.length]}"></span>`,
+          icon: `<span class="goal-swatch" style="background:${
+            GEM_COLORS[(objective.color ?? 0) % GEM_COLORS.length]
+          }"></span>`,
           label: `Collect ${objective.target}`,
         };
       case 'jelly':
@@ -510,9 +657,14 @@ export class App {
     const def = getLevel(this.levelId);
     this.session = new LevelSession(def, {
       extraMoves: extraMovesFrom(this.profile.upgrades) + boosterExtraMoves(this.chosenBoosters),
-      startingSpecials: boosterSpecials(this.chosenBoosters),
+      startingSpecials: [
+        ...boosterSpecials(this.chosenBoosters),
+        ...starlightSpecials(this.profile.upgrades),
+      ],
       context: contextFor(this.profile.upgrades),
       seedOffset: Math.floor(Math.random() * 100000),
+      fuseBonus: fuseBonus(this.profile.upgrades),
+      purge: this.chosenBoosters.includes('colorPurge'),
     });
 
     this.armedPowerup = null;
@@ -521,9 +673,11 @@ export class App {
     this.resultRecorded = false;
     this.idleTime = 0;
 
+    // Tint the whole app with the episode's hue.
+    this.setHue(EPISODES[def.episode].hue);
+
     this.closeModal();
     this.show('game');
-    // Fill the HUD first so the board measures against its final box.
     this.renderHud();
     this.renderPowerbar();
     this.renderer.setBoard(this.session.board);
@@ -538,7 +692,7 @@ export class App {
     $('game-score').textContent = session.score.toLocaleString();
     $('game-moves').parentElement!.classList.toggle('low', session.movesLeft <= 5);
 
-    $('game-goals').innerHTML = session.objectives
+    const goals = session.objectives
       .map((o) => {
         const { icon } = this.goalMeta(o, session.def);
         const shown = o.type === 'score' ? o.current.toLocaleString() : o.current;
@@ -547,6 +701,14 @@ export class App {
           <span class="goal-count">${o.done ? '✓' : `${shown}/${target}`}</span></div>`;
       })
       .join('');
+
+    const fuse = session.board.lowestFuse();
+    const fuseChip =
+      fuse !== null
+        ? `<div class="goal goal-fuse" data-urgent="${fuse <= 3}">🧨<span class="goal-count">${fuse}</span></div>`
+        : '';
+
+    $('game-goals').innerHTML = goals + fuseChip;
   }
 
   private renderPowerbar(): void {
@@ -565,13 +727,24 @@ export class App {
     }
   }
 
+  /** Spends a power-up, honouring the Quartermaster refund chance. */
+  private spendPowerup(id: PowerupId): boolean {
+    if (countItem(this.profile, id) <= 0) return false;
+    if (Math.random() < powerupRefundChance(this.profile.upgrades)) {
+      this.toast('Quartermaster saved it!');
+    } else {
+      consumeItem(this.profile, id);
+    }
+    saveProfile(this.profile);
+    return true;
+  }
+
   private armPowerup(id: PowerupId): void {
     if (!this.session || this.renderer.busy) return;
     if (countItem(this.profile, id) <= 0) return;
 
     if (id === 'shuffle') {
-      consumeItem(this.profile, id);
-      saveProfile(this.profile);
+      if (!this.spendPowerup(id)) return;
       this.renderer.enqueue(this.session.usePowerup('shuffle'));
       this.armedPowerup = null;
       this.renderPowerbar();
@@ -581,10 +754,16 @@ export class App {
     this.armedPowerup = this.armedPowerup === id ? null : id;
     this.freeSwapFirst = null;
     this.renderer.selection = null;
-    this.renderer.targeting = this.armedPowerup === 'hammer';
+    this.renderer.targeting = this.armedPowerup === 'hammer' || this.armedPowerup === 'lightning';
     this.renderPowerbar();
     if (this.armedPowerup) {
-      this.toast(id === 'hammer' ? 'Tap a gem to smash it' : 'Tap two neighbouring gems');
+      this.toast(
+        id === 'hammer'
+          ? 'Tap a gem to smash it'
+          : id === 'lightning'
+            ? 'Tap a gem to strike its row and column'
+            : 'Tap two neighbouring gems',
+      );
     }
   }
 
@@ -628,8 +807,8 @@ export class App {
       startPos = null;
       if (!cell || !this.session) return;
 
-      if (this.armedPowerup === 'hammer') {
-        this.fireHammer(cell);
+      if (this.armedPowerup === 'hammer' || this.armedPowerup === 'lightning') {
+        this.fireTargeted(this.armedPowerup, cell);
         return;
       }
       if (this.armedPowerup === 'freeswap') {
@@ -637,8 +816,8 @@ export class App {
         return;
       }
 
-      // Tap-to-select, then tap a neighbour to swap. Selection is only ever
-      // changed on release, so a single tap cannot select and deselect itself.
+      // Selection only ever changes on release, so a single tap cannot select
+      // and deselect itself.
       const selected = this.renderer.selection;
       if (selected) {
         const sameCell = selected.r === cell.r && selected.c === cell.c;
@@ -671,14 +850,12 @@ export class App {
     if (!this.session || this.renderer.busy) return;
     const result = this.session.swap(a, b);
     if (result.steps.length) this.renderer.enqueue(result.steps);
-    if (!result.valid && !result.steps.length) return;
     this.renderHud();
   }
 
-  private fireHammer(pos: Pos): void {
-    if (!this.session || !consumeItem(this.profile, 'hammer')) return;
-    saveProfile(this.profile);
-    this.renderer.enqueue(this.session.usePowerup('hammer', pos));
+  private fireTargeted(kind: 'hammer' | 'lightning', pos: Pos): void {
+    if (!this.session || !this.spendPowerup(kind)) return;
+    this.renderer.enqueue(this.session.usePowerup(kind, pos));
     this.armedPowerup = null;
     this.renderer.targeting = false;
     this.renderPowerbar();
@@ -699,8 +876,7 @@ export class App {
       this.renderer.selection = pos;
       return;
     }
-    if (!consumeItem(this.profile, 'freeswap')) return;
-    saveProfile(this.profile);
+    if (!this.spendPowerup('freeswap')) return;
     this.renderer.enqueue(this.session.usePowerup('freeswap', first, pos));
     this.freeSwapFirst = null;
     this.armedPowerup = null;
@@ -760,14 +936,14 @@ export class App {
     if (session.state === 'won') {
       const stars = session.stars();
       const { firstClear } = recordResult(this.profile, session.def.id, stars, session.score);
-      const coins = coinReward(stars, session.leftoverMoves, firstClear, this.profile.upgrades);
+      const coins = coinReward(stars, session.leftoverMoves, firstClear, this.profile.upgrades, session.def.id);
       this.profile.coins += coins;
       saveProfile(this.profile);
 
       const nextId = Math.min(session.def.id + 1, TOTAL_LEVELS);
       this.openModal(`
+        <div class="modal-tag" style="--ep-hue:${EPISODES[session.def.episode].hue}">${session.def.episodeName}</div>
         <h2>Level cleared!</h2>
-        <p class="lead">${session.def.episodeName}</p>
         <div class="star-row">${[0, 1, 2].map((i) => `<i data-on="${i < stars}">★</i>`).join('')}</div>
         <p class="lead">Score <strong>${session.score.toLocaleString()}</strong><br />
           Earned <strong><span class="coin"></span> ${coins}</strong>${
@@ -782,6 +958,7 @@ export class App {
       `);
       $('to-map').addEventListener('click', () => {
         this.closeModal();
+        this.mapRegion = regionOf(session.def.id);
         this.show('map');
       });
       $('to-next').addEventListener('click', () => {
@@ -792,7 +969,14 @@ export class App {
       return;
     }
 
+    // Second Wind can hand the life back on a loss.
+    let refunded = false;
+    if (Math.random() < lifeRefundChance(this.profile.upgrades)) {
+      this.profile.lives = Math.min(maxLives(this.profile.upgrades), this.profile.lives + 1);
+      refunded = true;
+    }
     saveProfile(this.profile);
+
     const remaining = session
       .remaining()
       .map((o) => {
@@ -803,10 +987,16 @@ export class App {
       })
       .join('');
 
+    const fuseLoss = session.failReason === 'fuse';
     this.openModal(`
-      <h2>Out of moves</h2>
-      <p class="lead">${Math.round(session.completion() * 100)}% of the way there.</p>
+      <h2>${fuseLoss ? 'A fuse ran out!' : 'Out of moves'}</h2>
+      <p class="lead">${
+        fuseLoss
+          ? 'Clear fuse gems before their counter hits zero.'
+          : `${Math.round(session.completion() * 100)}% of the way there.`
+      }</p>
       <div class="goal-list">${remaining}</div>
+      ${refunded ? '<p class="lead refund">🌬️ Second Wind refunded your life</p>' : ''}
       <div class="btn-row">
         <button class="btn" id="to-map">Map</button>
         <button class="btn btn-primary" id="to-retry">Retry</button>
@@ -814,6 +1004,7 @@ export class App {
     `);
     $('to-map').addEventListener('click', () => {
       this.closeModal();
+      this.mapRegion = regionOf(session.def.id);
       this.show('map');
     });
     $('to-retry').addEventListener('click', () => {

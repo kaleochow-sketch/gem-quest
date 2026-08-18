@@ -4,7 +4,7 @@ import { GemKind, Pos, Special, Step } from '../engine/types.js';
 import { LevelDef, Objective, buildBoard, grantStartingSpecials } from './levels.js';
 
 export type SessionState = 'playing' | 'won' | 'lost';
-export type PowerupKind = 'hammer' | 'shuffle' | 'freeswap';
+export type PowerupKind = 'hammer' | 'shuffle' | 'freeswap' | 'lightning';
 
 /** Score awarded for each unused move once the goals are met. */
 const LEFTOVER_MOVE_BONUS = 500;
@@ -22,6 +22,10 @@ export interface SessionOptions {
   context?: ResolveContext;
   /** Varies the board between replays of the same level. */
   seedOffset?: number;
+  /** Extra moves added to every fuse clock (the Defuser upgrade). */
+  fuseBonus?: number;
+  /** Clear one whole colour on the opening board (the Purge booster). */
+  purge?: boolean;
 }
 
 /** One playthrough of one level: board plus goals, moves and power-ups. */
@@ -35,6 +39,8 @@ export class LevelSession {
   state: SessionState = 'playing';
   /** Moves that were left over when the level was won. */
   leftoverMoves = 0;
+  /** Why the level ended, for the results screen. */
+  failReason: 'moves' | 'fuse' | null = null;
 
   private readonly collectedByColor: number[];
   private readonly initialBlockers: number;
@@ -49,9 +55,15 @@ export class LevelSession {
     this.context = options.context ?? { cascadeBonus: 0.35, specialLuck: 0, minMoves: 4 };
     this.movesLeft = def.moves + (options.extraMoves ?? 0);
 
+    if (options.fuseBonus) {
+      for (const cell of this.board.cells) {
+        if (cell.gem?.fuse) cell.gem.fuse += options.fuseBonus;
+      }
+    }
     if (options.startingSpecials?.length) {
       grantStartingSpecials(this.board, this.rng, options.startingSpecials);
     }
+    if (options.purge) this.purgeColor();
 
     this.collectedByColor = new Array(def.colorCount).fill(0);
     this.initialBlockers = this.board.blockersRemaining();
@@ -71,7 +83,13 @@ export class LevelSession {
     if (result.valid) {
       this.movesLeft--;
       this.ingest(result.steps);
+      // Goals are checked before fuses, so a winning move still wins even if
+      // it was the move a fuse would have expired on.
       this.evaluate();
+      if (this.state === 'playing' && this.board.tickFuses().length) {
+        this.state = 'lost';
+        this.failReason = 'fuse';
+      }
     }
     return result;
   }
@@ -90,6 +108,28 @@ export class LevelSession {
       this.evaluate();
     }
     return steps;
+  }
+
+  /** Wipes the most common colour off the board (the Purge booster). */
+  private purgeColor(): void {
+    const counts = new Array(this.def.colorCount).fill(0);
+    for (let r = 0; r < this.board.height; r++) {
+      for (let c = 0; c < this.board.width; c++) {
+        const gem = this.board.gemAt(r, c);
+        if (gem && gem.kind === GemKind.Normal) counts[gem.color]++;
+      }
+    }
+    let best = 0;
+    for (let i = 1; i < counts.length; i++) if (counts[i] > counts[best]) best = i;
+
+    const seeds: Pos[] = [];
+    for (let r = 0; r < this.board.height; r++) {
+      for (let c = 0; c < this.board.width; c++) {
+        const gem = this.board.gemAt(r, c);
+        if (gem && gem.kind === GemKind.Normal && gem.color === best) seeds.push({ r, c });
+      }
+    }
+    if (seeds.length) this.board.resolve(this.context, seeds, []);
   }
 
   hint(): { a: Pos; b: Pos } | null {
@@ -142,7 +182,10 @@ export class LevelSession {
       this.refreshProgress();
       return;
     }
-    if (this.movesLeft <= 0) this.state = 'lost';
+    if (this.movesLeft <= 0) {
+      this.state = 'lost';
+      this.failReason = 'moves';
+    }
   }
 
   /** 0-3, from the level's score thresholds. */

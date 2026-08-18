@@ -37,7 +37,7 @@ function defaultProfile(): Profile {
     unlocked: 1,
     levels: {},
     upgrades: emptyRanks(),
-    inventory: { hammer: 1, shuffle: 1, freeswap: 1 },
+    inventory: { hammer: 1, shuffle: 1, freeswap: 1, lightning: 0 },
     lives: 5,
     livesUpdatedAt: Date.now(),
     soundOn: true,
@@ -145,8 +145,10 @@ export function starsFor(profile: Profile, levelId: number): number {
 
 export function buyUpgrade(profile: Profile, id: UpgradeId): boolean {
   const def = upgradeById(id);
-  const rank = profile.upgrades[id];
+  const rank = profile.upgrades[id] ?? 0;
   if (rank >= def.maxRank) return false;
+  // Star gate is enforced in the model, not only in the shop UI.
+  if (totalStars(profile) < def.starsRequired) return false;
   const cost = def.cost(rank);
   if (profile.coins < cost) return false;
   profile.coins -= cost;

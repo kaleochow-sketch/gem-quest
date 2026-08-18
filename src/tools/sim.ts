@@ -6,7 +6,14 @@
 import { Board } from '../engine/board.js';
 import { Rng } from '../engine/rng.js';
 import { GemKind, Pos } from '../engine/types.js';
-import { LevelDef, TOTAL_LEVELS, allLevels, isBossLevel } from '../game/levels.js';
+import {
+  LEVELS_PER_REGION,
+  LevelDef,
+  REGIONS,
+  TOTAL_LEVELS,
+  allLevels,
+  isBossLevel,
+} from '../game/levels.js';
 import { LevelSession } from '../game/session.js';
 
 interface Snapshot {
@@ -61,6 +68,16 @@ function scoreMove(board: Board, def: LevelDef, move: { a: Pos; b: Pos }): numbe
   }
 
   let utility = gained * 0.02 + specialsMade * 40;
+
+  // Fuse gems are an instant loss when they expire, so defusing outranks
+  // everything else once the clock is short.
+  const fusesBefore = board.fusesRemaining();
+  const fusesAfter = trial.fusesRemaining();
+  if (fusesBefore > fusesAfter) {
+    const urgency = board.lowestFuse() ?? 99;
+    utility += (fusesBefore - fusesAfter) * (600 + Math.max(0, 30 - urgency) * 90);
+  }
+
   for (const objective of def.objectives) {
     switch (objective.type) {
       case 'jelly':
@@ -124,13 +141,20 @@ function playLevel(
 function main(): void {
   const trials = Number(process.env.TRIALS ?? 12);
   const skill = Number(process.env.SKILL ?? 0.8);
-  const levels = allLevels();
+  // A thousand levels is too many to play exhaustively; sample the curve.
+  const step = Number(process.env.SAMPLE ?? 10);
+  const verbose = process.env.VERBOSE === '1';
+  // The stride must be coprime with the 10-level episode length, otherwise
+  // the sample lands on boss levels every time and misreads the curve.
+  const levels = allLevels().filter((d) => d.id % step === 1 || d.id === TOTAL_LEVELS);
   const rng = new Rng(0xc0ffee);
 
-  console.log(`Gem Quest balance run — ${trials} trials/level at skill ${skill}\n`);
-  console.log('lvl  diff  moves  goal                              win%   ★   score   done%');
+  console.log(
+    `Gem Quest balance run — ${trials} trials/level at skill ${skill}, every ${step}th level\n`,
+  );
+  if (verbose) console.log('lvl  diff  moves  goal                              win%   ★   score   done%');
 
-  const rates: number[] = [];
+  const rates: { id: number; rate: number }[] = [];
   for (const def of levels) {
     let wins = 0;
     let stars = 0;
@@ -144,26 +168,42 @@ function main(): void {
       completion += outcome.completion;
     }
     const rate = wins / trials;
-    rates.push(rate);
+    rates.push({ id: def.id, rate });
     const goal = def.objectives
       .map((o) => `${o.type}${o.color !== undefined ? `#${o.color}` : ''}:${o.target}`)
       .join(' + ');
     const bar = '█'.repeat(Math.round(rate * 20)).padEnd(20, '·');
-    console.log(
+    if (verbose) console.log(
       `${String(def.id).padStart(3)}  ${def.difficulty.toFixed(2)}  ${String(def.moves).padStart(5)}  ${goal.padEnd(32).slice(0, 32)}  ${bar} ${(rate * 100).toFixed(0).padStart(3)}%  ${(stars / trials).toFixed(1)}  ${Math.round(score / trials).toString().padStart(6)}  ${((completion / trials) * 100).toFixed(0).padStart(3)}%${isBossLevel(def.id) ? '  BOSS' : ''}`,
     );
   }
 
-  console.log('\nEpisode summary (mean win rate):');
-  for (let e = 0; e < TOTAL_LEVELS / 10; e++) {
-    const slice = rates.slice(e * 10, e * 10 + 10);
-    const mean = slice.reduce((a, b) => a + b, 0) / slice.length;
+  console.log('Region summary (mean win rate):');
+  for (let r = 0; r < REGIONS.length; r++) {
+    const lo = r * LEVELS_PER_REGION;
+    const hi = lo + LEVELS_PER_REGION;
+    const slice = rates.filter((x) => x.id > lo && x.id <= hi);
+    if (!slice.length) continue;
+    const mean = slice.reduce((a, b) => a + b.rate, 0) / slice.length;
     console.log(
-      `  ep${String(e + 1).padStart(2)} ${levels[e * 10].episodeName.padEnd(16)} ${'█'.repeat(Math.round(mean * 30)).padEnd(30, '·')} ${(mean * 100).toFixed(0)}%`,
+      `  ${String(r + 1).padStart(2)} ${REGIONS[r].name.padEnd(17)} ${'█'
+        .repeat(Math.round(mean * 30))
+        .padEnd(30, '·')} ${(mean * 100).toFixed(0)}%`,
     );
   }
-  const overall = rates.reduce((a, b) => a + b, 0) / rates.length;
-  console.log(`\noverall ${(overall * 100).toFixed(1)}%  |  first10 ${(rates.slice(0, 10).reduce((a, b) => a + b, 0) / 10 * 100).toFixed(0)}%  last10 ${(rates.slice(-10).reduce((a, b) => a + b, 0) / 10 * 100).toFixed(0)}%`);
+
+  const overall = rates.reduce((a, b) => a + b.rate, 0) / rates.length;
+  const first = rates.filter((x) => x.id <= 100);
+  const last = rates.filter((x) => x.id > 900);
+  console.log(
+    `\noverall ${(overall * 100).toFixed(1)}%  |  first100 ${(
+      (first.reduce((a, b) => a + b.rate, 0) / Math.max(1, first.length)) *
+      100
+    ).toFixed(0)}%  last100 ${(
+      (last.reduce((a, b) => a + b.rate, 0) / Math.max(1, last.length)) *
+      100
+    ).toFixed(0)}%`,
+  );
 }
 
 main();

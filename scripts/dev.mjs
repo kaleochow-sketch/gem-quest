@@ -15,5 +15,5 @@ const ctx = await esbuild.context({
 });
 
 await ctx.watch();
-const { host, port } = await ctx.serve({ servedir: 'dist', host: '127.0.0.1', port: 5178 });
+const { host, port } = await ctx.serve({ servedir: 'dist', host: '0.0.0.0', port: 5178 });
 console.log(`Gem Quest dev server: http://${host}:${port}`);
