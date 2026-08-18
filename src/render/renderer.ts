@@ -5,9 +5,20 @@ import { Blocker, Gem, GemKind, Pos, Special, Step } from '../engine/types.js';
  * Gem palette. Each colour also gets its own silhouette, so the board stays
  * readable without relying on hue alone.
  */
-export const GEM_COLORS = ['#ff4d6d', '#ffc233', '#3ddc84', '#45b7ff', '#b57bff', '#ff6fd8', '#14d6c4'];
-const GEM_LIGHT = ['#ffa3b4', '#ffe4a0', '#a8f5c8', '#a9dcff', '#dcc0ff', '#ffbaec', '#9af5ec'];
-const GEM_DEEP = ['#a8123a', '#a76a00', '#0f8f4d', '#0d5f9e', '#6332b8', '#b32b8f', '#068077'];
+export const GEM_COLORS = ['#e5372f', '#ffb300', '#43a047', '#1e88e5', '#8e24aa', '#ec407a', '#00bcd4'];
+const GEM_LIGHT = ['#ff8b7d', '#ffe08a', '#8ee6a0', '#8ec9ff', '#d79cf0', '#ffa3c9', '#7ef0ff'];
+const GEM_DEEP = ['#8e1109', '#a86c00', '#1b5e20', '#0d47a1', '#4a148c', '#ad1457', '#00707d'];
+
+/** Plural names, used so collect goals read as objects rather than colours. */
+export const GEM_NAMES = [
+  'flags',
+  'dogs',
+  'tennis balls',
+  'onigiri',
+  'sewing machines',
+  'yarn balls',
+  'paws',
+];
 
 interface Sprite {
   id: number;
@@ -58,6 +69,18 @@ interface Shockwave {
   width: number;
 }
 
+/** The dog dragging his rear along a row or column to wipe it out. */
+interface Scoot {
+  fromX: number;
+  fromY: number;
+  toX: number;
+  toY: number;
+  /** 1 -> 0 over the sweep. */
+  life: number;
+  vertical: boolean;
+  color: string;
+}
+
 interface Beam {
   x1: number;
   y1: number;
@@ -100,6 +123,9 @@ export class GameRenderer {
   private floaters: Floater[] = [];
   private shockwaves: Shockwave[] = [];
   private beams: Beam[] = [];
+  private scoots: Scoot[] = [];
+  /** Cached full-size scoot sprite, rebuilt whenever the cell size changes. */
+  private scootSprite: HTMLCanvasElement | null = null;
   private banner: Banner | null = null;
 
   private queue: Step[] = [];
@@ -150,6 +176,7 @@ export class GameRenderer {
     this.floaters = [];
     this.shockwaves = [];
     this.beams = [];
+    this.scoots = [];
     this.banner = null;
     this.queue = [];
     this.active = null;
@@ -214,6 +241,7 @@ export class GameRenderer {
     this.originY = (rect.height - this.cell * this.board.height) / 2;
     // Cached art is size-specific.
     this.gemCache.clear();
+    this.scootSprite = null;
   }
 
   cellAt(clientX: number, clientY: number): Pos | null {
@@ -238,7 +266,7 @@ export class GameRenderer {
     return img;
   }
 
-  /** Draws one gem into its own canvas: shadow, faceted body, rim and gloss. */
+  /** Draws one gem into its own canvas: shadow, coloured tile, then its icon. */
   private renderGemSprite(gem: Gem): HTMLCanvasElement {
     const side = Math.max(8, Math.ceil(this.cell * 1.3 * this.dpr));
     const sprite = document.createElement('canvas');
@@ -259,146 +287,382 @@ export class GameRenderer {
     }
 
     const idx = gem.color % GEM_COLORS.length;
+    this.paintTile(g, idx, radius);
+    this.paintIcon(g, idx, radius);
+    if (gem.special !== Special.None) this.paintSpecialMark(g, gem.special, radius);
+    return sprite;
+  }
+
+  /**
+   * The coloured plate every icon sits on. Three of the icons are mostly
+   * white, so the plate — not the artwork — is what keeps the colours
+   * separable at a glance.
+   */
+  private paintTile(g: CanvasRenderingContext2D, idx: number, radius: number): void {
     const mid = GEM_COLORS[idx];
     const light = GEM_LIGHT[idx];
     const deep = GEM_DEEP[idx];
 
-    // Contact shadow.
     g.save();
     g.globalAlpha = 0.4;
     g.fillStyle = '#000';
     g.filter = `blur(${Math.max(1, radius * 0.14)}px)`;
     g.beginPath();
-    g.ellipse(0, radius * 0.42, radius * 0.82, radius * 0.34, 0, 0, Math.PI * 2);
+    g.ellipse(0, radius * 0.44, radius * 0.84, radius * 0.32, 0, 0, Math.PI * 2);
     g.fill();
     g.restore();
 
-    // Body.
     const body = g.createLinearGradient(-radius, -radius, radius * 0.6, radius);
     body.addColorStop(0, light);
-    body.addColorStop(0.42, mid);
+    body.addColorStop(0.45, mid);
     body.addColorStop(1, deep);
     g.fillStyle = body;
-    this.gemPath(g, idx, radius);
+    this.tilePath(g, radius);
     g.fill();
 
-    // Top facet: the same silhouette, shrunk and lifted, reads as a cut face.
     g.save();
-    g.globalAlpha = 0.5;
-    const facet = g.createLinearGradient(0, -radius, 0, 0);
-    facet.addColorStop(0, 'rgba(255,255,255,0.92)');
-    facet.addColorStop(1, 'rgba(255,255,255,0)');
-    g.fillStyle = facet;
-    g.translate(0, -radius * 0.16);
-    this.gemPath(g, idx, radius * 0.66);
+    g.globalAlpha = 0.42;
+    const sheen = g.createLinearGradient(0, -radius, 0, 0);
+    sheen.addColorStop(0, 'rgba(255,255,255,0.95)');
+    sheen.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = sheen;
+    this.tilePath(g, radius * 0.94);
     g.fill();
     g.restore();
 
-    // Bottom bounce light.
-    g.save();
-    g.globalAlpha = 0.34;
-    const bounce = g.createLinearGradient(0, radius * 0.2, 0, radius);
-    bounce.addColorStop(0, 'rgba(255,255,255,0)');
-    bounce.addColorStop(1, light);
-    g.fillStyle = bounce;
-    g.translate(0, radius * 0.2);
-    this.gemPath(g, idx, radius * 0.7);
-    g.fill();
-    g.restore();
-
-    // Outline.
-    g.strokeStyle = 'rgba(12,6,24,0.45)';
-    g.lineWidth = Math.max(1.2, radius * 0.08);
-    this.gemPath(g, idx, radius);
+    g.strokeStyle = 'rgba(10,5,20,0.5)';
+    g.lineWidth = Math.max(1.2, radius * 0.09);
+    this.tilePath(g, radius);
     g.stroke();
-
-    // Specular gloss and a small secondary glint.
-    g.save();
-    g.globalAlpha = 0.85;
-    g.fillStyle = '#fff';
-    g.beginPath();
-    g.ellipse(-radius * 0.3, -radius * 0.4, radius * 0.24, radius * 0.14, -0.6, 0, Math.PI * 2);
-    g.fill();
-    g.globalAlpha = 0.45;
-    g.beginPath();
-    g.ellipse(radius * 0.3, radius * 0.28, radius * 0.1, radius * 0.06, -0.6, 0, Math.PI * 2);
-    g.fill();
-    g.restore();
-
-    if (gem.special !== Special.None) this.paintSpecialMark(g, gem.special, radius);
-    return sprite;
   }
 
-  /** One silhouette per colour, so hue is never the only signal. */
-  private gemPath(g: CanvasRenderingContext2D, idx: number, radius: number): void {
+  private tilePath(g: CanvasRenderingContext2D, radius: number): void {
+    const r = radius * 0.98;
+    const c = r * 0.42;
     g.beginPath();
+    g.moveTo(-r + c, -r);
+    g.arcTo(r, -r, r, r, c);
+    g.arcTo(r, r, -r, r, c);
+    g.arcTo(-r, r, -r, -r, c);
+    g.arcTo(-r, -r, r, -r, c);
+    g.closePath();
+  }
+
+  /** Each colour gets its own object, drawn at roughly 70% of the tile. */
+  private paintIcon(g: CanvasRenderingContext2D, idx: number, radius: number): void {
+    g.save();
+    const u = radius * 0.72;
     switch (idx) {
       case 0:
-        g.arc(0, 0, radius, 0, Math.PI * 2);
+        this.paintJapanFlag(g, u);
         break;
-      case 1: {
-        const r = radius * 0.9;
-        const c = r * 0.36;
-        g.moveTo(-r + c, -r);
-        g.arcTo(r, -r, r, r, c);
-        g.arcTo(r, r, -r, r, c);
-        g.arcTo(-r, r, -r, -r, c);
-        g.arcTo(-r, -r, r, -r, c);
-        g.closePath();
+      case 1:
+        this.paintDogFace(g, u);
         break;
-      }
       case 2:
-        this.polygon(g, 3, radius * 1.1, -Math.PI / 2);
+        this.paintTennisBall(g, u);
         break;
       case 3:
-        this.polygon(g, 4, radius * 1.08, 0);
+        this.paintOnigiri(g, u);
         break;
       case 4:
-        this.polygon(g, 5, radius * 1.05, -Math.PI / 2);
+        this.paintSewingMachine(g, u);
         break;
       case 5:
-        this.polygon(g, 6, radius * 1.02, 0);
+        this.paintYarn(g, u);
         break;
-      default: {
-        // Rounded cross for the seventh colour.
-        const a = radius * 0.42;
-        const b = radius * 1.02;
-        const k = a * 0.5;
-        g.moveTo(-a, -b + k);
-        g.quadraticCurveTo(-a, -b, -a + k, -b);
-        g.lineTo(a - k, -b);
-        g.quadraticCurveTo(a, -b, a, -b + k);
-        g.lineTo(a, -a);
-        g.lineTo(b - k, -a);
-        g.quadraticCurveTo(b, -a, b, -a + k);
-        g.lineTo(b, a - k);
-        g.quadraticCurveTo(b, a, b - k, a);
-        g.lineTo(a, a);
-        g.lineTo(a, b - k);
-        g.quadraticCurveTo(a, b, a - k, b);
-        g.lineTo(-a + k, b);
-        g.quadraticCurveTo(-a, b, -a, b - k);
-        g.lineTo(-a, a);
-        g.lineTo(-b + k, a);
-        g.quadraticCurveTo(-b, a, -b, a - k);
-        g.lineTo(-b, -a + k);
-        g.quadraticCurveTo(-b, -a, -b + k, -a);
-        g.lineTo(-a, -a);
-        g.closePath();
+      default:
+        this.paintPaw(g, u);
         break;
-      }
+    }
+    g.restore();
+  }
+
+  private paintJapanFlag(g: CanvasRenderingContext2D, u: number): void {
+    const w = u * 1.25;
+    const h = u * 0.86;
+    g.save();
+    g.shadowColor = 'rgba(0,0,0,0.4)';
+    g.shadowBlur = u * 0.16;
+    g.shadowOffsetY = u * 0.06;
+    g.fillStyle = '#fdfdfd';
+    g.beginPath();
+    // A gentle wave along the bottom edge so it reads as cloth.
+    g.moveTo(-w / 2, -h / 2);
+    g.lineTo(w / 2, -h / 2);
+    g.lineTo(w / 2, h / 2);
+    g.quadraticCurveTo(w / 6, h / 2 - u * 0.16, -w / 6, h / 2);
+    g.quadraticCurveTo(-w / 3, h / 2 + u * 0.1, -w / 2, h / 2);
+    g.closePath();
+    g.fill();
+    g.restore();
+
+    g.fillStyle = '#bc002d';
+    g.beginPath();
+    g.arc(0, 0, h * 0.32, 0, Math.PI * 2);
+    g.fill();
+
+    g.strokeStyle = 'rgba(90,90,110,0.5)';
+    g.lineWidth = Math.max(1, u * 0.06);
+    g.strokeRect(-w / 2, -h / 2, w, h);
+  }
+
+  private paintDogFace(g: CanvasRenderingContext2D, u: number): void {
+    const earGrad = g.createLinearGradient(0, -u * 0.6, 0, u * 0.6);
+    earGrad.addColorStop(0, '#f3ede2');
+    earGrad.addColorStop(1, '#cfc4b2');
+    g.fillStyle = earGrad;
+    for (const sx of [-1, 1]) {
+      g.save();
+      g.translate(sx * u * 0.72, -u * 0.05);
+      g.rotate(sx * 0.35);
+      g.beginPath();
+      g.ellipse(0, 0, u * 0.3, u * 0.56, 0, 0, Math.PI * 2);
+      g.fill();
+      g.restore();
+    }
+
+    const head = g.createRadialGradient(-u * 0.22, -u * 0.3, u * 0.1, 0, 0, u);
+    head.addColorStop(0, '#ffffff');
+    head.addColorStop(0.65, '#f7f3ec');
+    head.addColorStop(1, '#ddd5c8');
+    g.fillStyle = head;
+    g.beginPath();
+    g.ellipse(0, 0, u * 0.82, u * 0.76, 0, 0, Math.PI * 2);
+    g.fill();
+
+    // Muzzle.
+    g.fillStyle = '#fffdf9';
+    g.beginPath();
+    g.ellipse(0, u * 0.3, u * 0.44, u * 0.32, 0, 0, Math.PI * 2);
+    g.fill();
+
+    g.fillStyle = '#241d1a';
+    for (const sx of [-1, 1]) {
+      g.beginPath();
+      g.ellipse(sx * u * 0.3, -u * 0.16, u * 0.11, u * 0.14, 0, 0, Math.PI * 2);
+      g.fill();
+    }
+    // Nose.
+    g.beginPath();
+    g.moveTo(-u * 0.15, u * 0.12);
+    g.lineTo(u * 0.15, u * 0.12);
+    g.lineTo(0, u * 0.32);
+    g.closePath();
+    g.fill();
+
+    g.strokeStyle = '#241d1a';
+    g.lineWidth = Math.max(1, u * 0.07);
+    g.lineCap = 'round';
+    g.beginPath();
+    g.moveTo(0, u * 0.32);
+    g.lineTo(0, u * 0.44);
+    g.stroke();
+
+    // Eye glints.
+    g.fillStyle = 'rgba(255,255,255,0.95)';
+    for (const sx of [-1, 1]) {
+      g.beginPath();
+      g.arc(sx * u * 0.26, -u * 0.21, u * 0.04, 0, Math.PI * 2);
+      g.fill();
     }
   }
 
-  private polygon(g: CanvasRenderingContext2D, sides: number, radius: number, rotation: number): void {
-    for (let i = 0; i < sides; i++) {
-      const a = rotation + (Math.PI * 2 * i) / sides;
-      const x = Math.cos(a) * radius;
-      const y = Math.sin(a) * radius;
-      if (i === 0) g.moveTo(x, y);
-      else g.lineTo(x, y);
-    }
+  private paintTennisBall(g: CanvasRenderingContext2D, u: number): void {
+    const ball = g.createRadialGradient(-u * 0.28, -u * 0.32, u * 0.1, 0, 0, u * 0.92);
+    ball.addColorStop(0, '#f2ff8a');
+    ball.addColorStop(0.6, '#d7e94b');
+    ball.addColorStop(1, '#9fb52a');
+    g.fillStyle = ball;
+    g.beginPath();
+    g.arc(0, 0, u * 0.88, 0, Math.PI * 2);
+    g.fill();
+
+    g.strokeStyle = '#fdfdf6';
+    g.lineWidth = Math.max(1.4, u * 0.13);
+    g.lineCap = 'round';
+    // The two curved seams.
+    g.beginPath();
+    g.moveTo(-u * 0.88, -u * 0.22);
+    g.quadraticCurveTo(0, u * 0.3, u * 0.88, -u * 0.22);
+    g.stroke();
+    g.beginPath();
+    g.moveTo(-u * 0.88, u * 0.22);
+    g.quadraticCurveTo(0, -u * 0.3, u * 0.88, u * 0.22);
+    g.stroke();
+
+    g.strokeStyle = 'rgba(70,84,10,0.5)';
+    g.lineWidth = Math.max(1, u * 0.06);
+    g.beginPath();
+    g.arc(0, 0, u * 0.88, 0, Math.PI * 2);
+    g.stroke();
+  }
+
+  private paintOnigiri(g: CanvasRenderingContext2D, u: number): void {
+    const rice = g.createLinearGradient(0, -u, 0, u);
+    rice.addColorStop(0, '#ffffff');
+    rice.addColorStop(1, '#e8e2d4');
+    g.fillStyle = rice;
+    // Rounded triangle.
+    const R = u * 0.9;
+    const k = u * 0.3;
+    g.beginPath();
+    g.moveTo(0, -R);
+    g.quadraticCurveTo(k * 0.6, -R + k * 0.2, R * 0.86, R * 0.62);
+    g.quadraticCurveTo(R * 0.9, R * 0.9, R * 0.5, R * 0.9);
+    g.lineTo(-R * 0.5, R * 0.9);
+    g.quadraticCurveTo(-R * 0.9, R * 0.9, -R * 0.86, R * 0.62);
+    g.quadraticCurveTo(-k * 0.6, -R + k * 0.2, 0, -R);
     g.closePath();
+    g.fill();
+    g.strokeStyle = 'rgba(120,110,90,0.45)';
+    g.lineWidth = Math.max(1, u * 0.06);
+    g.stroke();
+
+    // Nori band across the base.
+    g.save();
+    g.beginPath();
+    g.rect(-R * 0.62, R * 0.16, R * 1.24, R * 0.74);
+    g.clip();
+    g.fillStyle = '#22303a';
+    g.fillRect(-R, R * 0.16, R * 2, R);
+    g.restore();
+
+    g.fillStyle = '#241d1a';
+    for (const sx of [-1, 1]) {
+      g.beginPath();
+      g.ellipse(sx * u * 0.26, -u * 0.06, u * 0.07, u * 0.1, 0, 0, Math.PI * 2);
+      g.fill();
+    }
+    g.strokeStyle = '#241d1a';
+    g.lineWidth = Math.max(1, u * 0.06);
+    g.lineCap = 'round';
+    g.beginPath();
+    g.arc(0, u * 0.02, u * 0.14, 0.15 * Math.PI, 0.85 * Math.PI);
+    g.stroke();
+  }
+
+  private paintSewingMachine(g: CanvasRenderingContext2D, u: number): void {
+    g.save();
+    g.translate(0, u * 0.1);
+    const shell = g.createLinearGradient(0, -u * 0.8, 0, u * 0.7);
+    shell.addColorStop(0, '#ffffff');
+    shell.addColorStop(1, '#c9c9d6');
+    g.fillStyle = shell;
+    g.strokeStyle = 'rgba(30,20,50,0.55)';
+    g.lineWidth = Math.max(1, u * 0.07);
+
+    // Base.
+    g.beginPath();
+    g.roundRect(-u * 0.95, u * 0.42, u * 1.9, u * 0.34, u * 0.12);
+    g.fill();
+    g.stroke();
+
+    // Upright column on the right.
+    g.beginPath();
+    g.roundRect(u * 0.36, -u * 0.72, u * 0.56, u * 1.16, u * 0.16);
+    g.fill();
+    g.stroke();
+
+    // Arm reaching left over the needle.
+    g.beginPath();
+    g.roundRect(-u * 0.92, -u * 0.78, u * 1.5, u * 0.42, u * 0.16);
+    g.fill();
+    g.stroke();
+
+    // Needle bar and needle.
+    g.beginPath();
+    g.roundRect(-u * 0.82, -u * 0.36, u * 0.24, u * 0.3, u * 0.06);
+    g.fill();
+    g.stroke();
+    g.strokeStyle = '#3a3550';
+    g.lineWidth = Math.max(1, u * 0.06);
+    g.beginPath();
+    g.moveTo(-u * 0.7, -u * 0.06);
+    g.lineTo(-u * 0.7, u * 0.34);
+    g.stroke();
+
+    // Handwheel.
+    g.fillStyle = '#8e7bd6';
+    g.beginPath();
+    g.arc(u * 0.64, -u * 0.1, u * 0.2, 0, Math.PI * 2);
+    g.fill();
+    g.strokeStyle = 'rgba(30,20,50,0.55)';
+    g.lineWidth = Math.max(1, u * 0.06);
+    g.stroke();
+
+    // Thread spool on top.
+    g.fillStyle = '#ff8fbf';
+    g.beginPath();
+    g.roundRect(-u * 0.1, -u * 1.06, u * 0.3, u * 0.3, u * 0.05);
+    g.fill();
+    g.stroke();
+    g.restore();
+  }
+
+  private paintYarn(g: CanvasRenderingContext2D, u: number): void {
+    const ball = g.createRadialGradient(-u * 0.26, -u * 0.3, u * 0.08, 0, 0, u * 0.9);
+    ball.addColorStop(0, '#fff1e0');
+    ball.addColorStop(0.55, '#ffd0a8');
+    ball.addColorStop(1, '#d98a5a');
+    g.fillStyle = ball;
+    g.beginPath();
+    g.arc(0, 0, u * 0.85, 0, Math.PI * 2);
+    g.fill();
+
+    g.save();
+    g.beginPath();
+    g.arc(0, 0, u * 0.85, 0, Math.PI * 2);
+    g.clip();
+    g.strokeStyle = 'rgba(150,80,40,0.55)';
+    g.lineWidth = Math.max(1, u * 0.09);
+    for (let i = -2; i <= 2; i++) {
+      g.beginPath();
+      g.ellipse(0, 0, u * 0.85, u * 0.34, i * 0.6, 0, Math.PI * 2);
+      g.stroke();
+    }
+    g.restore();
+
+    // Loose thread tail.
+    g.strokeStyle = '#ffd0a8';
+    g.lineWidth = Math.max(1, u * 0.09);
+    g.lineCap = 'round';
+    g.beginPath();
+    g.moveTo(u * 0.7, u * 0.5);
+    g.quadraticCurveTo(u * 1.1, u * 0.75, u * 0.82, u * 0.98);
+    g.stroke();
+
+    g.strokeStyle = 'rgba(120,60,25,0.5)';
+    g.lineWidth = Math.max(1, u * 0.06);
+    g.beginPath();
+    g.arc(0, 0, u * 0.85, 0, Math.PI * 2);
+    g.stroke();
+  }
+
+  private paintPaw(g: CanvasRenderingContext2D, u: number): void {
+    g.fillStyle = '#fffaf6';
+    g.strokeStyle = 'rgba(30,40,50,0.4)';
+    g.lineWidth = Math.max(1, u * 0.05);
+
+    // Main pad.
+    g.beginPath();
+    g.ellipse(0, u * 0.36, u * 0.52, u * 0.42, 0, 0, Math.PI * 2);
+    g.fill();
+    g.stroke();
+
+    // Toes.
+    const toes: [number, number, number][] = [
+      [-u * 0.58, -u * 0.18, u * 0.21],
+      [-u * 0.2, -u * 0.46, u * 0.22],
+      [u * 0.2, -u * 0.46, u * 0.22],
+      [u * 0.58, -u * 0.18, u * 0.21],
+    ];
+    for (const [x, y, r] of toes) {
+      g.beginPath();
+      g.ellipse(x, y, r, r * 1.15, 0, 0, Math.PI * 2);
+      g.fill();
+      g.stroke();
+    }
   }
 
   private paintSpecialMark(g: CanvasRenderingContext2D, special: Special, radius: number): void {
@@ -408,23 +672,26 @@ export class GameRenderer {
 
     if (special === Special.RocketH || special === Special.RocketV) {
       if (special === Special.RocketV) g.rotate(Math.PI / 2);
-      g.strokeStyle = 'rgba(10,6,20,0.5)';
-      g.lineWidth = radius * 0.3;
-      for (const dy of [-radius * 0.34, 0, radius * 0.34]) {
+      // A dark band with the dog mid-scoot, so the direction is obvious.
+      g.fillStyle = 'rgba(12,8,24,0.55)';
+      g.beginPath();
+      g.roundRect(-radius, -radius * 0.42, radius * 2, radius * 0.84, radius * 0.2);
+      g.fill();
+
+      g.strokeStyle = 'rgba(255,255,255,0.85)';
+      g.lineWidth = radius * 0.09;
+      for (const dy of [-radius * 0.2, 0, radius * 0.2]) {
         g.beginPath();
-        g.moveTo(-radius * 0.66, dy);
-        g.lineTo(radius * 0.66, dy);
+        g.moveTo(-radius * 0.86, dy);
+        g.lineTo(-radius * 0.4, dy);
         g.stroke();
       }
-      g.strokeStyle = '#fff';
-      g.lineWidth = radius * 0.17;
-      for (const dy of [-radius * 0.34, 0, radius * 0.34]) {
-        g.beginPath();
-        g.moveTo(-radius * 0.62, dy);
-        g.lineTo(radius * 0.62, dy);
-        g.stroke();
-      }
-    } else if (special === Special.Bomb) {
+      this.paintScootDog(g, radius * 0.55, radius * 0.3, radius * 0.16);
+      g.restore();
+      return;
+    }
+
+    if (special === Special.Bomb) {
       g.strokeStyle = 'rgba(10,6,20,0.5)';
       g.lineWidth = radius * 0.26;
       g.beginPath();
@@ -440,6 +707,87 @@ export class GameRenderer {
       g.arc(0, 0, radius * 0.19, 0, Math.PI * 2);
       g.fill();
     }
+    g.restore();
+  }
+
+  /**
+   * The white dog mid-scoot, facing +X with its rear on the ground line at
+   * y = 0. Used both as the rocket badge and as the full-size sweep sprite.
+   */
+  private paintScootDog(
+    g: CanvasRenderingContext2D,
+    cx: number,
+    groundY: number,
+    u: number,
+  ): void {
+    g.save();
+    g.translate(cx, groundY);
+
+    const coat = g.createLinearGradient(0, -u * 2.2, 0, 0);
+    coat.addColorStop(0, '#ffffff');
+    coat.addColorStop(1, '#ded6c8');
+    g.fillStyle = coat;
+    g.strokeStyle = 'rgba(40,32,28,0.55)';
+    g.lineWidth = Math.max(0.8, u * 0.16);
+
+    // Tail, up and curled behind.
+    g.save();
+    g.strokeStyle = '#f2ece1';
+    g.lineWidth = Math.max(1, u * 0.42);
+    g.lineCap = 'round';
+    g.beginPath();
+    g.moveTo(-u * 1.5, -u * 1.1);
+    g.quadraticCurveTo(-u * 2.4, -u * 1.9, -u * 1.6, -u * 2.4);
+    g.stroke();
+    g.restore();
+
+    // Body, tilted back so the rear sits on the ground.
+    g.beginPath();
+    g.ellipse(-u * 0.35, -u * 1.15, u * 1.5, u * 1.02, -0.22, 0, Math.PI * 2);
+    g.fill();
+    g.stroke();
+
+    // Front legs, stretched forward — the scoot pose.
+    g.lineCap = 'round';
+    g.strokeStyle = '#efe8dc';
+    g.lineWidth = Math.max(1, u * 0.44);
+    for (const dy of [-u * 0.1, u * 0.12]) {
+      g.beginPath();
+      g.moveTo(u * 0.5, -u * 1.0 + dy);
+      g.lineTo(u * 1.5, -u * 0.2 + dy);
+      g.stroke();
+    }
+
+    // Head.
+    g.fillStyle = coat;
+    g.strokeStyle = 'rgba(40,32,28,0.55)';
+    g.lineWidth = Math.max(0.8, u * 0.16);
+    g.beginPath();
+    g.ellipse(u * 1.25, -u * 1.85, u * 0.86, u * 0.78, 0.1, 0, Math.PI * 2);
+    g.fill();
+    g.stroke();
+
+    // Floppy ear.
+    g.fillStyle = '#e2d9c9';
+    g.beginPath();
+    g.ellipse(u * 0.86, -u * 1.9, u * 0.3, u * 0.56, 0.35, 0, Math.PI * 2);
+    g.fill();
+    g.stroke();
+
+    // Face.
+    g.fillStyle = '#241d1a';
+    g.beginPath();
+    g.arc(u * 1.5, -u * 1.98, u * 0.15, 0, Math.PI * 2);
+    g.fill();
+    g.beginPath();
+    g.ellipse(u * 2.02, -u * 1.72, u * 0.2, u * 0.16, 0, 0, Math.PI * 2);
+    g.fill();
+    // Tongue, because he is enjoying himself.
+    g.fillStyle = '#ff8fa8';
+    g.beginPath();
+    g.ellipse(u * 1.86, -u * 1.32, u * 0.2, u * 0.3, 0.3, 0, Math.PI * 2);
+    g.fill();
+
     g.restore();
   }
 
@@ -647,10 +995,26 @@ export class GameRenderer {
       const color = GEM_COLORS[detonation.color % GEM_COLORS.length];
 
       if (detonation.special === Special.RocketH) {
-        this.beams.push({ x1: this.originX, y1: y, x2: this.originX + this.cell * this.board.width, y2: y, life: 1, color });
+        this.scoots.push({
+          fromX: this.originX - this.cell * 0.6,
+          fromY: y,
+          toX: this.originX + this.cell * (this.board.width + 0.6),
+          toY: y,
+          life: 1,
+          vertical: false,
+          color,
+        });
         this.shake = Math.max(this.shake, 5);
       } else if (detonation.special === Special.RocketV) {
-        this.beams.push({ x1: x, y1: this.originY, x2: x, y2: this.originY + this.cell * this.board.height, life: 1, color });
+        this.scoots.push({
+          fromX: x,
+          fromY: this.originY - this.cell * 0.6,
+          toX: x,
+          toY: this.originY + this.cell * (this.board.height + 0.6),
+          life: 1,
+          vertical: true,
+          color,
+        });
         this.shake = Math.max(this.shake, 5);
       } else if (detonation.special === Special.Bomb) {
         this.shockwaves.push({ x, y, radius: 0, maxRadius: this.cell * 2.2, life: 1, color, width: this.cell * 0.3 });
@@ -831,6 +1195,29 @@ export class GameRenderer {
     for (const b of this.beams) b.life -= dt * 2.6;
     if (this.beams.length) this.beams = this.beams.filter((b) => b.life > 0);
 
+    for (const sc of this.scoots) {
+      sc.life -= dt * 1.7;
+      // Dust kicked up behind him as he goes.
+      if (sc.life > 0.15 && Math.random() < 0.7) {
+        const t = 1 - Math.max(0, sc.life);
+        const x = sc.fromX + (sc.toX - sc.fromX) * t;
+        const y = sc.fromY + (sc.toY - sc.fromY) * t;
+        this.particles.push({
+          x: x - (sc.vertical ? 0 : this.cell * 0.35),
+          y: y - (sc.vertical ? this.cell * 0.35 : 0) + this.cell * 0.18,
+          vx: (sc.vertical ? (Math.random() - 0.5) * 3 : -1.6 - Math.random() * 1.6),
+          vy: (sc.vertical ? -1.6 - Math.random() * 1.4 : -0.8 - Math.random()),
+          life: 1,
+          maxLife: 0.45,
+          color: 'rgba(255,240,220,0.85)',
+          size: this.cell * (0.05 + Math.random() * 0.06),
+          star: false,
+          spin: 0,
+        });
+      }
+    }
+    if (this.scoots.length) this.scoots = this.scoots.filter((sc) => sc.life > 0);
+
     if (this.banner) {
       this.banner.life -= dt * 0.85;
       if (this.banner.life <= 0) this.banner = null;
@@ -927,6 +1314,7 @@ export class GameRenderer {
     this.drawFrame();
     this.drawWells();
     this.drawBeams();
+    this.drawScoots();
     this.drawSprites();
     this.drawOverlays();
     this.drawShockwaves();
@@ -1303,6 +1691,65 @@ export class GameRenderer {
       ctx.moveTo(b.x1, b.y1);
       ctx.lineTo(b.x2, b.y2);
       ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  /** Full-size scoot sprite, drawn once per cell size and then blitted. */
+  private getScootSprite(): HTMLCanvasElement {
+    if (this.scootSprite) return this.scootSprite;
+    const side = Math.max(16, Math.ceil(this.cell * 3.0 * this.dpr));
+    const sprite = document.createElement('canvas');
+    sprite.width = side;
+    sprite.height = side;
+    const g = sprite.getContext('2d')!;
+    g.translate(side / 2, side / 2);
+    g.save();
+    g.shadowColor = 'rgba(0,0,0,0.45)';
+    g.shadowBlur = side * 0.06;
+    // Ground line sits just below centre so his rear drags along the row.
+    this.paintScootDog(g, -this.cell * 0.3 * this.dpr, this.cell * 0.5 * this.dpr, this.cell * 0.26 * this.dpr);
+    g.restore();
+    this.scootSprite = sprite;
+    return sprite;
+  }
+
+  private drawScoots(): void {
+    const ctx = this.ctx;
+    const img = this.getScootSprite();
+    const size = img.width / this.dpr;
+
+    for (const sc of this.scoots) {
+      const life = Math.max(0, Math.min(1, sc.life));
+      const t = 1 - life;
+      const x = sc.fromX + (sc.toX - sc.fromX) * t;
+      const y = sc.fromY + (sc.toY - sc.fromY) * t;
+
+      // Scorch trail from the start of the run to where he is now.
+      ctx.save();
+      ctx.globalAlpha = life * 0.9;
+      const grad = sc.vertical
+        ? ctx.createLinearGradient(0, sc.fromY, 0, y)
+        : ctx.createLinearGradient(sc.fromX, 0, x, 0);
+      grad.addColorStop(0, 'rgba(255,255,255,0)');
+      grad.addColorStop(1, sc.color);
+      ctx.fillStyle = grad;
+      const thickness = this.cell * 0.72;
+      if (sc.vertical) {
+        ctx.fillRect(x - thickness / 2, sc.fromY, thickness, y - sc.fromY);
+      } else {
+        ctx.fillRect(sc.fromX, y - thickness / 2, x - sc.fromX, thickness);
+      }
+      ctx.restore();
+
+      // Wobble, because he is putting his back into it.
+      const wobble = Math.sin(t * Math.PI * 9) * this.cell * 0.06;
+
+      ctx.save();
+      ctx.translate(x, y);
+      if (sc.vertical) ctx.rotate(Math.PI / 2);
+      ctx.translate(0, wobble);
+      ctx.drawImage(img, -size / 2, -size / 2, size, size);
       ctx.restore();
     }
   }

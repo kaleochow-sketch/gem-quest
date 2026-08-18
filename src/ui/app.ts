@@ -1,4 +1,4 @@
-import { GameRenderer, GEM_COLORS } from '../render/renderer.js';
+import { GameRenderer, GEM_COLORS, GEM_NAMES } from '../render/renderer.js';
 import { Pos } from '../engine/types.js';
 import {
   EPISODES,
@@ -611,7 +611,7 @@ export class App {
           icon: `<span class="goal-swatch" style="background:${
             GEM_COLORS[(objective.color ?? 0) % GEM_COLORS.length]
           }"></span>`,
-          label: `Collect ${objective.target}`,
+          label: `Collect ${objective.target} ${GEM_NAMES[(objective.color ?? 0) % GEM_NAMES.length]}`,
         };
       case 'jelly':
         return { icon: '🟦', label: `Clear ${objective.target} jelly` };
@@ -630,7 +630,7 @@ export class App {
       case 'score':
         return 'Reach the target score before the moves run out.';
       case 'collect':
-        return 'Match gems of this colour to collect them.';
+        return 'Match three or more of them to collect them.';
       case 'jelly':
         return 'Clear a gem on a jelly tile to peel a layer away.';
       case 'blockers':

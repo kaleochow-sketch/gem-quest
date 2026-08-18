@@ -22,13 +22,18 @@ npm run dev      # dev server with live rebuild → http://127.0.0.1:5178
 
 ## Playing
 
-Swipe a gem into a neighbour, or tap one then tap a neighbour. Match three or
-more of a colour. Every colour also has its own silhouette, so the board stays
-readable without relying on hue.
+Swipe a piece into a neighbour, or tap one then tap a neighbour. Match three or
+more of a kind.
 
-**Specials.** Four in a row makes a rocket that clears its line; an L or T makes
+The seven pieces are a **Japanese flag**, a **white dog**, a **tennis ball**, an
+**onigiri**, a **sewing machine**, a **ball of yarn** and a **paw print**. Three
+of those are mostly white, so each sits on its own strongly coloured tile — the
+artwork gives identity, the tile keeps them separable at a glance.
+
+**Specials.** Four in a row makes a **scoot** — the white dog drags his rear
+along the whole row or column, wiping out everything in his path; an L or T makes
 a bomb that blasts 3x3; five in a row makes a colour bomb. Swapping two specials
-combines them — two rockets clear a full row *and* column, rocket + bomb clears
+combines them — two scoots clear a full row *and* column, scoot + bomb clears
 three of each, two bombs make a 5x5 blast, colour bomb + special upgrades every
 gem of that colour and fires them all, and two colour bombs clear the board.
 
