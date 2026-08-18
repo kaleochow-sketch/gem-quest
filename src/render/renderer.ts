@@ -408,24 +408,29 @@ export class GameRenderer {
   }
 
   private paintDogFace(g: CanvasRenderingContext2D, u: number): void {
-    const earGrad = g.createLinearGradient(0, -u * 0.6, 0, u * 0.6);
-    earGrad.addColorStop(0, '#f3ede2');
-    earGrad.addColorStop(1, '#cfc4b2');
+    // Long caramel ears, hanging straight down beside the head.
+    const earGrad = g.createLinearGradient(0, -u * 0.5, 0, u * 0.95);
+    earGrad.addColorStop(0, '#e8b784');
+    earGrad.addColorStop(0.55, '#c78a4e');
+    earGrad.addColorStop(1, '#9a6532');
     g.fillStyle = earGrad;
+    g.strokeStyle = 'rgba(90,55,20,0.4)';
+    g.lineWidth = Math.max(0.8, u * 0.05);
     for (const sx of [-1, 1]) {
       g.save();
-      g.translate(sx * u * 0.72, -u * 0.05);
-      g.rotate(sx * 0.35);
+      g.translate(sx * u * 0.66, u * 0.28);
+      g.rotate(sx * 0.14);
       g.beginPath();
-      g.ellipse(0, 0, u * 0.3, u * 0.56, 0, 0, Math.PI * 2);
+      g.ellipse(0, 0, u * 0.29, u * 0.66, 0, 0, Math.PI * 2);
       g.fill();
+      g.stroke();
       g.restore();
     }
 
     const head = g.createRadialGradient(-u * 0.22, -u * 0.3, u * 0.1, 0, 0, u);
     head.addColorStop(0, '#ffffff');
-    head.addColorStop(0.65, '#f7f3ec');
-    head.addColorStop(1, '#ddd5c8');
+    head.addColorStop(0.65, '#f9f4ea');
+    head.addColorStop(1, '#e6d2b6');
     g.fillStyle = head;
     g.beginPath();
     g.ellipse(0, 0, u * 0.82, u * 0.76, 0, 0, Math.PI * 2);
@@ -469,33 +474,70 @@ export class GameRenderer {
   }
 
   private paintTennisBall(g: CanvasRenderingContext2D, u: number): void {
-    const ball = g.createRadialGradient(-u * 0.28, -u * 0.32, u * 0.1, 0, 0, u * 0.92);
-    ball.addColorStop(0, '#f2ff8a');
-    ball.addColorStop(0.6, '#d7e94b');
-    ball.addColorStop(1, '#9fb52a');
+    const R = u * 0.88;
+
+    const ball = g.createRadialGradient(-u * 0.3, -u * 0.34, u * 0.08, 0, 0, R * 1.05);
+    ball.addColorStop(0, '#f6ff9c');
+    ball.addColorStop(0.5, '#dced52');
+    ball.addColorStop(0.85, '#b7cf33');
+    ball.addColorStop(1, '#8ba31f');
     g.fillStyle = ball;
     g.beginPath();
-    g.arc(0, 0, u * 0.88, 0, Math.PI * 2);
+    g.arc(0, 0, R, 0, Math.PI * 2);
     g.fill();
 
-    g.strokeStyle = '#fdfdf6';
-    g.lineWidth = Math.max(1.4, u * 0.13);
-    g.lineCap = 'round';
-    // The two curved seams.
+    // Felt fuzz: a soft rim so it does not read as flat plastic.
+    g.save();
     g.beginPath();
-    g.moveTo(-u * 0.88, -u * 0.22);
-    g.quadraticCurveTo(0, u * 0.3, u * 0.88, -u * 0.22);
-    g.stroke();
-    g.beginPath();
-    g.moveTo(-u * 0.88, u * 0.22);
-    g.quadraticCurveTo(0, -u * 0.3, u * 0.88, u * 0.22);
-    g.stroke();
+    g.arc(0, 0, R, 0, Math.PI * 2);
+    g.clip();
+    g.globalAlpha = 0.28;
+    g.strokeStyle = '#f2ffa8';
+    g.lineWidth = Math.max(0.8, u * 0.05);
+    for (let i = 0; i < 26; i++) {
+      const a = (Math.PI * 2 * i) / 26;
+      g.beginPath();
+      g.moveTo(Math.cos(a) * R * 0.9, Math.sin(a) * R * 0.9);
+      g.lineTo(Math.cos(a) * R * 1.06, Math.sin(a) * R * 1.06);
+      g.stroke();
+    }
+    g.restore();
 
-    g.strokeStyle = 'rgba(70,84,10,0.5)';
+    // The two seams: each bows inward from one edge, which is what gives a
+    // tennis ball its shape rather than the X two crossing arcs produce.
+    g.save();
+    g.beginPath();
+    g.arc(0, 0, R, 0, Math.PI * 2);
+    g.clip();
+    g.lineCap = 'round';
+
+    for (const sx of [-1, 1]) {
+      g.strokeStyle = 'rgba(120,140,20,0.45)';
+      g.lineWidth = Math.max(1.6, u * 0.19);
+      g.beginPath();
+      g.moveTo(sx * R * 1.02, -R * 1.02);
+      g.bezierCurveTo(sx * R * 0.1, -R * 0.5, sx * R * 0.1, R * 0.5, sx * R * 1.02, R * 1.02);
+      g.stroke();
+
+      g.strokeStyle = '#fffef2';
+      g.lineWidth = Math.max(1.2, u * 0.13);
+      g.beginPath();
+      g.moveTo(sx * R * 1.02, -R * 1.02);
+      g.bezierCurveTo(sx * R * 0.12, -R * 0.5, sx * R * 0.12, R * 0.5, sx * R * 1.02, R * 1.02);
+      g.stroke();
+    }
+    g.restore();
+
+    g.strokeStyle = 'rgba(70,84,10,0.55)';
     g.lineWidth = Math.max(1, u * 0.06);
     g.beginPath();
-    g.arc(0, 0, u * 0.88, 0, Math.PI * 2);
+    g.arc(0, 0, R, 0, Math.PI * 2);
     g.stroke();
+
+    g.fillStyle = 'rgba(255,255,255,0.5)';
+    g.beginPath();
+    g.ellipse(-u * 0.32, -u * 0.38, u * 0.22, u * 0.13, -0.6, 0, Math.PI * 2);
+    g.fill();
   }
 
   private paintOnigiri(g: CanvasRenderingContext2D, u: number): void {
@@ -767,10 +809,13 @@ export class GameRenderer {
     g.fill();
     g.stroke();
 
-    // Floppy ear.
-    g.fillStyle = '#e2d9c9';
+    // Floppy caramel ear, hanging down past the jaw.
+    const ear = g.createLinearGradient(0, -u * 2.2, 0, -u * 0.9);
+    ear.addColorStop(0, '#e8b784');
+    ear.addColorStop(1, '#9a6532');
+    g.fillStyle = ear;
     g.beginPath();
-    g.ellipse(u * 0.86, -u * 1.9, u * 0.3, u * 0.56, 0.35, 0, Math.PI * 2);
+    g.ellipse(u * 0.82, -u * 1.5, u * 0.29, u * 0.72, 0.12, 0, Math.PI * 2);
     g.fill();
     g.stroke();
 
@@ -1196,7 +1241,7 @@ export class GameRenderer {
     if (this.beams.length) this.beams = this.beams.filter((b) => b.life > 0);
 
     for (const sc of this.scoots) {
-      sc.life -= dt * 1.7;
+      sc.life -= dt * 1.05;
       // Dust kicked up behind him as he goes.
       if (sc.life > 0.15 && Math.random() < 0.7) {
         const t = 1 - Math.max(0, sc.life);
@@ -1314,9 +1359,10 @@ export class GameRenderer {
     this.drawFrame();
     this.drawWells();
     this.drawBeams();
-    this.drawScoots();
     this.drawSprites();
     this.drawOverlays();
+    // Drawn after the pieces so the dog passes in front of them.
+    this.drawScoots();
     this.drawShockwaves();
     this.drawParticles();
     this.drawFloaters();
