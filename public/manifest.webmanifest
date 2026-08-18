@@ -1,0 +1,13 @@
+{
+  "name": "Gem Quest",
+  "short_name": "Gem Quest",
+  "description": "A match-3 puzzle adventure across 150 progressively harder levels.",
+  "start_url": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#141026",
+  "theme_color": "#141026",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

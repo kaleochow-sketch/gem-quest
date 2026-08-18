@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#141026" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="description" content="Gem Quest — a match-3 puzzle adventure across 150 levels." />
+    <title>Gem Quest</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- Level map -->
+      <section class="screen" id="screen-map" data-active="true">
+        <header class="topbar">
+          <div class="brand">
+            <span class="brand-mark">◆</span>
+            <span class="brand-name">Gem Quest</span>
+          </div>
+          <div class="wallet">
+            <button class="chip" id="chip-lives" type="button">
+              <span class="chip-icon">❤️</span><span id="lives-count">5</span>
+              <small id="lives-timer"></small>
+            </button>
+            <button class="chip" id="chip-stars" type="button">
+              <span class="chip-icon">⭐</span><span id="stars-count">0</span>
+            </button>
+            <button class="chip chip-gold" id="chip-coins" type="button">
+              <span class="coin"></span><span id="coins-count">0</span>
+            </button>
+          </div>
+        </header>
+        <div class="map-scroll" id="map-scroll"></div>
+        <nav class="tabbar">
+          <button class="tab" data-goto="shop" type="button"><span>🛒</span>Shop</button>
+          <button class="tab tab-primary" id="btn-continue" type="button">Play</button>
+          <button class="tab" data-goto="upgrades" type="button"><span>⚙️</span>Upgrades</button>
+        </nav>
+      </section>
+
+      <!-- Shop / upgrades -->
+      <section class="screen" id="screen-shop">
+        <header class="topbar">
+          <button class="icon-btn" data-goto="map" type="button">←</button>
+          <h1 id="shop-title">Shop</h1>
+          <div class="chip chip-gold"><span class="coin"></span><span id="shop-coins">0</span></div>
+        </header>
+        <div class="panel-scroll" id="shop-body"></div>
+      </section>
+
+      <!-- Gameplay -->
+      <section class="screen screen-game" id="screen-game">
+        <header class="game-top">
+          <button class="icon-btn" id="btn-quit" type="button">←</button>
+          <div class="level-badge">
+            <small>Level</small>
+            <strong id="game-level">1</strong>
+          </div>
+          <div class="moves-badge">
+            <small>Moves</small>
+            <strong id="game-moves">25</strong>
+          </div>
+          <div class="score-badge">
+            <small>Score</small>
+            <strong id="game-score">0</strong>
+          </div>
+        </header>
+        <div class="goals" id="game-goals"></div>
+        <div class="board-wrap">
+          <canvas id="board"></canvas>
+        </div>
+        <div class="powerbar" id="powerbar"></div>
+      </section>
+
+      <!-- Modals -->
+      <div class="overlay" id="overlay">
+        <div class="modal" id="modal"></div>
+      </div>
+    </div>
+    <script type="module" src="bundle.js"></script>
+  </body>
+</html>

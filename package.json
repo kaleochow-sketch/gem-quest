@@ -1,0 +1,20 @@
+{
+  "name": "gem-quest",
+  "version": "1.0.0",
+  "description": "Gem Quest \u2014 a match-3 mobile game with 150 progressively harder levels, boosters and a permanent upgrade tree.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "serve": "node scripts/serve.mjs",
+    "sim": "node scripts/sim.mjs",
+    "debug": "node scripts/debug.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.3"
+  }
+}
