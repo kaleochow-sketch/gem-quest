@@ -85,6 +85,7 @@ body::after {
 @keyframes spinmark { 0%,100% { transform: rotate(0); } 50% { transform: rotate(180deg); } }
 .brand-name {
   font-weight: 800; font-size: 19px; letter-spacing: 0.2px;
+  white-space: nowrap;
   background: linear-gradient(100deg, #fff, #ffd8f4 40%, #b9e0ff);
   -webkit-background-clip: text; background-clip: text; color: transparent;
 }
@@ -519,7 +520,10 @@ body::after {
 .install-bar {
   position: fixed;
   left: 50%;
-  bottom: calc(14px + var(--safe-bottom));
+  /* Clears the bottom chrome: the tab bar on the map and shop, the power
+     bar in a level. Sitting at the very bottom put it straight over the
+     Play button, which is exactly what a new player reaches for. */
+  bottom: calc(14px + var(--safe-bottom) + 92px);
   transform: translate(-50%, 140%);
   width: min(520px, calc(100% - 24px));
   display: flex;
@@ -534,6 +538,7 @@ body::after {
   transition: transform 0.35s cubic-bezier(0.2, 1.1, 0.4, 1);
 }
 .install-bar[data-open="true"] { transform: translate(-50%, 0); }
+.install-bar[data-hidden="true"] { transform: translate(-50%, 320%); pointer-events: none; }
 .install-icon { width: 42px; height: 42px; border-radius: 11px; }
 .install-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .install-copy strong { font-size: 14px; }
@@ -597,3 +602,17 @@ body::after {
 .steps { text-align: left; margin: 0 0 16px; padding-left: 20px; color: var(--muted); font-size: 13px; line-height: 1.65; }
 .steps strong { color: var(--text); }
 .ios-share { color: #4da3ff; }
+
+
+/* ---------------- narrow phones ---------------- */
+
+/* The top bar carries the wordmark, help, share and three wallet chips.
+   Below ~400px that no longer fits, and the wordmark was wrapping to two
+   lines. The chips carry live state, so the wordmark is what gives way. */
+@media (max-width: 400px) {
+  .brand-name { display: none; }
+  .topbar { gap: 7px; padding-left: 12px; padding-right: 12px; }
+  .wallet { gap: 5px; }
+  .chip { padding: 6px 9px; font-size: 12.5px; }
+  .icon-btn { width: 34px; height: 34px; font-size: 17px; border-radius: 11px; }
+}

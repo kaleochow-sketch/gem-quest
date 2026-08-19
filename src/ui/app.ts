@@ -287,6 +287,8 @@ export class App {
 
   private show(screen: ScreenId): void {
     this.screen = screen;
+    // The install prompt stays out of the way while a level is in play.
+    $('install-bar').dataset.hidden = String(screen === 'game');
     for (const id of ['map', 'shop', 'game'] as ScreenId[]) {
       $(`screen-${id}`).dataset.active = String(id === screen);
     }
