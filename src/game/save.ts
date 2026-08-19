@@ -30,6 +30,7 @@ export interface Profile {
   /** Epoch ms the life timer last ticked. */
   livesUpdatedAt: number;
   soundOn: boolean;
+  musicOn: boolean;
   /** Tutorial cards already shown. */
   seen?: string[];
   /** The install banner was dismissed. */
@@ -53,6 +54,7 @@ function defaultProfile(): Profile {
     lives: 5,
     livesUpdatedAt: Date.now(),
     soundOn: true,
+    musicOn: true,
     seen: [],
     installDismissed: false,
     dev: false,

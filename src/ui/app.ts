@@ -1,3 +1,4 @@
+import { audio } from '../audio/audio.js';
 import { GameRenderer, GEM_COLORS, GEM_NAMES } from '../render/renderer.js';
 import { qrSvg } from './qr.js';
 import { Pos } from '../engine/types.js';
@@ -126,6 +127,11 @@ export class App {
   private installEvent: { prompt: () => void; userChoice: Promise<unknown> } | null = null;
 
 
+  /** The sound engine, exposed for debugging and for the dev console. */
+  get audio() {
+    return audio;
+  }
+
   /** Current session, exposed for debugging and automated play-throughs. */
   get activeSession(): LevelSession | null {
     return this.session;
@@ -137,6 +143,13 @@ export class App {
     this.renderer = new GameRenderer(this.canvas);
     this.levelId = Math.min(this.profile.unlocked, TOTAL_LEVELS);
     this.mapRegion = regionOf(this.levelId);
+
+    audio.setSfx(this.profile.soundOn !== false);
+    audio.setMusic(this.profile.musicOn !== false);
+    audio.setRegion(regionOf(this.levelId));
+    const wake = () => audio.unlock();
+    document.addEventListener('pointerdown', wake, { capture: true });
+    document.addEventListener('click', wake, { capture: true });
 
     this.bindChrome();
     this.bindBoardInput();
@@ -373,7 +386,13 @@ export class App {
     document.documentElement.style.setProperty('--ep-hue', String(hue));
   }
 
+  /** Keeps the backing track in the current region's key. */
+  private tuneMusic(region: number): void {
+    audio.setRegion(region);
+  }
+
   private toast(message: string): void {
+    audio.sfx('tap');
     const el = document.createElement('div');
     el.className = 'toast';
     el.textContent = message;
@@ -388,6 +407,7 @@ export class App {
   private renderMap(): void {
     this.mapRegion = Math.min(TOTAL_REGIONS - 1, Math.max(0, this.mapRegion));
     this.setHue(REGIONS[this.mapRegion].hue);
+    this.tuneMusic(this.mapRegion);
     this.renderRegionStrip();
 
     const host = $('map-scroll');
@@ -551,6 +571,36 @@ export class App {
   }
 
   private renderUpgrades(body: HTMLElement): void {
+    body.appendChild(this.sectionTitle('Sound'));
+    const audioToggles: { label: string; sub: string; icon: string; key: 'soundOn' | 'musicOn' }[] = [
+      { label: 'Sound effects', sub: 'Matches, blasts and the dog.', icon: '🔊', key: 'soundOn' },
+      { label: 'Music', sub: 'A backing track that changes key each region.', icon: '🎵', key: 'musicOn' },
+    ];
+    for (const t of audioToggles) {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.innerHTML = `<div class="card-icon">${t.icon}</div>
+        <div class="card-body"><div class="card-title">${t.label}</div>
+        <div class="card-sub">${t.sub}</div></div>`;
+      const btn = document.createElement('button');
+      btn.className = 'buy-btn';
+      btn.type = 'button';
+      const on = this.profile[t.key] !== false;
+      btn.textContent = on ? 'ON' : 'OFF';
+      btn.style.opacity = on ? '1' : '0.6';
+      btn.addEventListener('click', () => {
+        const next = this.profile[t.key] === false;
+        this.profile[t.key] = next;
+        saveProfile(this.profile);
+        audio.unlock();
+        if (t.key === 'soundOn') audio.setSfx(next);
+        else audio.setMusic(next);
+        this.renderShop();
+      });
+      card.appendChild(btn);
+      body.appendChild(card);
+    }
+
     const stars = totalStars(this.profile);
     body.appendChild(this.blurbLine(`Permanent, and applied to every level. You have ${stars} ★.`));
 
@@ -609,6 +659,7 @@ export class App {
     btn.addEventListener('click', () => {
       if (buyUpgrade(this.profile, upgrade.id)) {
         saveProfile(this.profile);
+        audio.sfx('coin');
         this.toast(`${upgrade.name} → rank ${this.profile.upgrades[upgrade.id]}`);
         this.renderShop();
         this.refreshWallet();
@@ -901,6 +952,7 @@ export class App {
     btn.addEventListener('click', () => {
       if (buyItem(this.profile, id, cost)) {
         saveProfile(this.profile);
+        audio.sfx('coin');
         this.toast(`${name} purchased`);
         this.renderShop();
         this.refreshWallet();
@@ -1270,6 +1322,7 @@ export class App {
 
     // Tint the whole app with the episode's hue.
     this.setHue(EPISODES[def.episode].hue);
+    this.tuneMusic(def.region);
 
     this.closeModal();
     this.show('game');
@@ -1530,6 +1583,8 @@ export class App {
 
     if (session.state === 'won') {
       const stars = session.stars();
+      audio.sfx('win');
+      for (let i = 0; i < stars; i++) window.setTimeout(() => audio.sfx('star', i), 420 + i * 260);
       const { firstClear } = recordResult(this.profile, session.def.id, stars, session.score);
       const coins = coinReward(stars, session.leftoverMoves, firstClear, this.profile.upgrades, session.def.id);
       this.profile.coins += coins;
@@ -1563,6 +1618,8 @@ export class App {
       });
       return;
     }
+
+    audio.sfx('lose');
 
     // Second Wind can hand the life back on a loss.
     let refunded = false;

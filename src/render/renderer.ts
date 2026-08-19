@@ -1,3 +1,4 @@
+import { audio } from '../audio/audio.js';
 import { Board } from '../engine/board.js';
 import { Blocker, Gem, GemKind, Pos, Special, Step } from '../engine/types.js';
 
@@ -79,6 +80,8 @@ interface Scoot {
   life: number;
   vertical: boolean;
   color: string;
+  /** Last shove index that played a scrape, so each shove sounds once. */
+  shove: number;
 }
 
 /** A patch of brown he leaves behind; the tile under it goes when it fades. */
@@ -1032,6 +1035,7 @@ export class GameRenderer {
       case 'swap': {
         const sa = this.spriteAt(step.a.r, step.a.c);
         const sb = this.spriteAt(step.b.r, step.b.c);
+        audio.sfx(step.valid ? 'swap' : 'invalid');
         duration = step.valid ? 175 : 340;
         if (sa) {
           from.set(sa.id, { x: sa.x, y: sa.y });
@@ -1202,6 +1206,17 @@ export class GameRenderer {
   /** Particles, sweeps, shockwaves and popups for a clear step. */
   private spawnClearEffects(step: Extract<Step, { type: 'clear' }>): Scoot[] {
     const sweeps: Scoot[] = [];
+    if (step.cleared.length) audio.sfx('match', step.cascade);
+    for (const detonation of step.detonations) {
+      if (detonation.special === Special.Bomb) audio.sfx('bomb');
+      else if (detonation.special === Special.Rainbow) audio.sfx('rainbow');
+    }
+    if (step.created.length) audio.sfx('special');
+    if (step.collected.length) audio.sfx('ingredient');
+    if (step.jelly.length) audio.sfx('jelly');
+    if (step.defused.length) audio.sfx('fuse');
+    if (step.damaged.some((d) => d.destroyed)) audio.sfx('crate');
+
     const hasSweep = step.detonations.some(
       (d) => d.special === Special.RocketH || d.special === Special.RocketV,
     );
@@ -1230,6 +1245,7 @@ export class GameRenderer {
           life: 1,
           vertical: false,
           color,
+          shove: -1,
         });
         this.shake = Math.max(this.shake, 5);
       } else if (detonation.special === Special.RocketV) {
@@ -1241,6 +1257,7 @@ export class GameRenderer {
           life: 1,
           vertical: true,
           color,
+          shove: -1,
         });
         this.shake = Math.max(this.shake, 5);
       } else if (detonation.special === Special.Bomb) {
@@ -1443,6 +1460,12 @@ export class GameRenderer {
 
     for (const sc of this.scoots) {
       sc.life -= dt / SCOOT_SECONDS;
+      const raw = 1 - Math.max(0, sc.life);
+      const shove = Math.min(SCOOT_SHOVES - 1, Math.floor(raw * SCOOT_SHOVES));
+      if (shove !== sc.shove) {
+        sc.shove = shove;
+        audio.sfx('scoot');
+      }
       // A little dust off his back feet. Kept light: it used to bury both
       // the brown streak and the dog himself.
       if (sc.life > 0.08 && Math.random() < 0.55) {

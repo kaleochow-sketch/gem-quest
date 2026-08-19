@@ -136,6 +136,22 @@ the developer's own machine, which fails for the recipient with "Safari cannot
 open the page". A genuine public deployment shares itself, so moving the game
 keeps sharing correct.
 
+## Sound
+
+Every sound is synthesised at runtime with the Web Audio API — there are no
+audio files to download or licence, and it all still works offline. Matches
+climb a pentatonic scale as a cascade deepens, so a long chain is audibly a
+long chain; the dog scrapes once per shove; blasts, ingredients, crates and
+jelly each have their own voice.
+
+The backing track is generated the same way: a pad, bass and arpeggio over a
+four-bar progression, scheduled a little ahead of the clock so timing stays
+steady. Each of the ten regions has its own key and tempo.
+
+Browsers only permit audio to start inside a user gesture, so the engine is
+unlocked on the first tap. Both sound and music can be switched off in
+Shop → Upgrades → Sound, and the choice persists.
+
 ## Dev tools
 
 Tap the ◆ beside the title **seven times** to reveal a 🛠 Dev tab in the shop.
