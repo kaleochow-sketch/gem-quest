@@ -5,9 +5,9 @@ import { Blocker, Gem, GemKind, Pos, Special, Step } from '../engine/types.js';
  * Gem palette. Each colour also gets its own silhouette, so the board stays
  * readable without relying on hue alone.
  */
-export const GEM_COLORS = ['#e5372f', '#ffb300', '#43a047', '#1e88e5', '#8e24aa', '#ec407a', '#00bcd4'];
-const GEM_LIGHT = ['#ff8b7d', '#ffe08a', '#8ee6a0', '#8ec9ff', '#d79cf0', '#ffa3c9', '#7ef0ff'];
-const GEM_DEEP = ['#8e1109', '#a86c00', '#1b5e20', '#0d47a1', '#4a148c', '#ad1457', '#00707d'];
+export const GEM_COLORS = ['#e5372f', '#2f3e6b', '#43a047', '#1e88e5', '#8e24aa', '#ec407a', '#00bcd4'];
+const GEM_LIGHT = ['#ff8b7d', '#6d7fb8', '#8ee6a0', '#8ec9ff', '#d79cf0', '#ffa3c9', '#7ef0ff'];
+const GEM_DEEP = ['#8e1109', '#141a33', '#1b5e20', '#0d47a1', '#4a148c', '#ad1457', '#00707d'];
 
 /** Plural names, used so collect goals read as objects rather than colours. */
 export const GEM_NAMES = [
@@ -103,12 +103,22 @@ interface ActiveStep {
   dying: Sprite[];
   from: Map<number, { x: number; y: number }>;
   to: Map<number, { x: number; y: number }>;
+  /**
+   * Normalised time at which each dying sprite should pop, so a rocket's
+   * row empties as the dog reaches it rather than all at once.
+   */
+  wipeAt: Map<number, number>;
+  /** Furniture changes held back until the dog has passed over them. */
+  pending: { at: number; done: boolean; apply: () => void }[];
 }
 
 const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
 const easeOutBack = (t: number) => 1 + 2.2 * Math.pow(t - 1, 3) + 1.4 * Math.pow(t - 1, 2);
 const easeInQuad = (t: number) => t * t;
 const easeInOutQuad = (t: number) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
+
+/** How long the dog takes to cross the board, in seconds. */
+const SCOOT_SECONDS = 1.15;
 
 const COMBO_WORDS = ['', '', 'Nice!', 'Sweet!', 'Tasty!', 'Delicious!', 'Divine!'];
 
@@ -931,6 +941,8 @@ export class GameRenderer {
     const from = new Map<number, { x: number; y: number }>();
     const to = new Map<number, { x: number; y: number }>();
     const dying: Sprite[] = [];
+    const wipeAt = new Map<number, number>();
+    const pending: { at: number; done: boolean; apply: () => void }[] = [];
     let duration = 220;
 
     switch (step.type) {
@@ -958,7 +970,66 @@ export class GameRenderer {
           const sprite = this.spriteAt(pos.r, pos.c);
           if (sprite) dying.push(sprite);
         }
-        this.spawnClearEffects(step);
+
+        const sweeps = this.spawnClearEffects(step);
+
+        if (sweeps.length) {
+          // The wipe now runs at the dog's pace, so the step lasts as long
+          // as the sweep does.
+          duration = SCOOT_SECONDS * 1000;
+          const timeFor = (pos: Pos): number => {
+            let soonest = 1;
+            for (const sc of sweeps) {
+              const cx = this.originX + (pos.c + 0.5) * this.cell;
+              const cy = this.originY + (pos.r + 0.5) * this.cell;
+              const p = sc.vertical
+                ? (cy - sc.fromY) / (sc.toY - sc.fromY)
+                : (cx - sc.fromX) / (sc.toX - sc.fromX);
+              soonest = Math.min(soonest, Math.max(0, Math.min(1, p)));
+            }
+            return soonest;
+          };
+
+          for (const { pos, gem } of step.cleared) {
+            const sprite = this.spriteAt(pos.r, pos.c);
+            const at = timeFor(pos);
+            if (sprite) wipeAt.set(sprite.id, at);
+            const color =
+              gem.kind === GemKind.Ingredient
+                ? '#ffd166'
+                : gem.special === Special.Rainbow
+                  ? '#ffffff'
+                  : GEM_COLORS[gem.color % GEM_COLORS.length];
+            pending.push({ at, done: false, apply: () => this.burst(pos, color, 7, 1.2, false) });
+          }
+          // Crates, jelly and chains give way as he passes over them too.
+          for (const entry of step.jelly) {
+            pending.push({
+              at: timeFor(entry.pos),
+              done: false,
+              apply: () => (this.jelly[this.index(entry.pos)] = entry.layersLeft),
+            });
+          }
+          for (const entry of step.damaged) {
+            pending.push({
+              at: timeFor(entry.pos),
+              done: false,
+              apply: () => {
+                const i = this.index(entry.pos);
+                if (entry.destroyed) this.blockers[i] = null;
+                else if (this.blockers[i]) this.blockers[i]!.hp = entry.hpLeft;
+                this.burst(entry.pos, entry.kind === 'crate' ? '#c98b4b' : '#8d94a6', 8, 1.1, false);
+              },
+            });
+          }
+          for (const pos of step.unlocked) {
+            pending.push({
+              at: timeFor(pos),
+              done: false,
+              apply: () => (this.locked[this.index(pos)] = false),
+            });
+          }
+        }
         break;
       }
       case 'fall': {
@@ -993,7 +1064,7 @@ export class GameRenderer {
       }
     }
 
-    this.active = { step, elapsed: 0, duration, dying, from, to };
+    this.active = { step, elapsed: 0, duration, dying, from, to, wipeAt, pending };
   }
 
   private centreOf(p: Pos): { x: number; y: number } {
@@ -1023,16 +1094,22 @@ export class GameRenderer {
     }
   }
 
-  /** Particles, beams, shockwaves and popups for a clear step. */
-  private spawnClearEffects(step: Extract<Step, { type: 'clear' }>): void {
-    for (const { pos, gem } of step.cleared) {
-      const color =
-        gem.kind === GemKind.Ingredient
-          ? '#ffd166'
-          : gem.special === Special.Rainbow
-            ? '#ffffff'
-            : GEM_COLORS[gem.color % GEM_COLORS.length];
-      this.burst(pos, color, gem.special === Special.None ? 5 : 10, gem.special === Special.None ? 1 : 1.5, false);
+  /** Particles, sweeps, shockwaves and popups for a clear step. */
+  private spawnClearEffects(step: Extract<Step, { type: 'clear' }>): Scoot[] {
+    const sweeps: Scoot[] = [];
+    const hasSweep = step.detonations.some(
+      (d) => d.special === Special.RocketH || d.special === Special.RocketV,
+    );
+    if (!hasSweep) {
+      for (const { pos, gem } of step.cleared) {
+        const color =
+          gem.kind === GemKind.Ingredient
+            ? '#ffd166'
+            : gem.special === Special.Rainbow
+              ? '#ffffff'
+              : GEM_COLORS[gem.color % GEM_COLORS.length];
+        this.burst(pos, color, gem.special === Special.None ? 5 : 10, gem.special === Special.None ? 1 : 1.5, false);
+      }
     }
 
     for (const detonation of step.detonations) {
@@ -1040,7 +1117,7 @@ export class GameRenderer {
       const color = GEM_COLORS[detonation.color % GEM_COLORS.length];
 
       if (detonation.special === Special.RocketH) {
-        this.scoots.push({
+        sweeps.push({
           fromX: this.originX - this.cell * 0.6,
           fromY: y,
           toX: this.originX + this.cell * (this.board.width + 0.6),
@@ -1051,7 +1128,7 @@ export class GameRenderer {
         });
         this.shake = Math.max(this.shake, 5);
       } else if (detonation.special === Special.RocketV) {
-        this.scoots.push({
+        sweeps.push({
           fromX: x,
           fromY: this.originY - this.cell * 0.6,
           toX: x,
@@ -1079,8 +1156,10 @@ export class GameRenderer {
       }
     }
 
-    for (const entry of step.damaged) {
-      this.burst(entry.pos, entry.kind === 'crate' ? '#c98b4b' : '#8d94a6', entry.destroyed ? 9 : 4, 1, false);
+    if (!sweeps.length) {
+      for (const entry of step.damaged) {
+        this.burst(entry.pos, entry.kind === 'crate' ? '#c98b4b' : '#8d94a6', entry.destroyed ? 9 : 4, 1, false);
+      }
     }
 
     for (const { pos } of step.collected) {
@@ -1122,6 +1201,9 @@ export class GameRenderer {
         life: 1,
       };
     }
+
+    this.scoots.push(...sweeps);
+    return sweeps;
   }
 
   private applyStep(step: Step): void {
@@ -1141,6 +1223,12 @@ export class GameRenderer {
         break;
       }
       case 'clear': {
+        for (const entry of this.active?.pending ?? []) {
+          if (!entry.done) {
+            entry.done = true;
+            entry.apply();
+          }
+        }
         for (const sprite of this.active?.dying ?? []) this.sprites.delete(sprite.id);
         for (const { pos, gem } of step.created) {
           const existing = this.spriteAt(pos.r, pos.c);
@@ -1220,6 +1308,11 @@ export class GameRenderer {
       p.x += p.vx * dt * 60;
       p.y += p.vy * dt * 60;
       p.vy += dt * 32;
+      // Dust puffs slow down and hang in the air instead of dropping.
+      if (p.size > this.cell * 0.085) {
+        p.vx *= 1 - dt * 2.4;
+        p.vy *= 1 - dt * 3.2;
+      }
       p.spin += dt * 6;
       p.life -= dt / p.maxLife;
     }
@@ -1241,24 +1334,28 @@ export class GameRenderer {
     if (this.beams.length) this.beams = this.beams.filter((b) => b.life > 0);
 
     for (const sc of this.scoots) {
-      sc.life -= dt * 1.05;
-      // Dust kicked up behind him as he goes.
-      if (sc.life > 0.15 && Math.random() < 0.7) {
+      sc.life -= dt / SCOOT_SECONDS;
+      // A proper dust cloud billowing out behind him.
+      if (sc.life > 0.08) {
         const t = 1 - Math.max(0, sc.life);
         const x = sc.fromX + (sc.toX - sc.fromX) * t;
         const y = sc.fromY + (sc.toY - sc.fromY) * t;
-        this.particles.push({
-          x: x - (sc.vertical ? 0 : this.cell * 0.35),
-          y: y - (sc.vertical ? this.cell * 0.35 : 0) + this.cell * 0.18,
-          vx: (sc.vertical ? (Math.random() - 0.5) * 3 : -1.6 - Math.random() * 1.6),
-          vy: (sc.vertical ? -1.6 - Math.random() * 1.4 : -0.8 - Math.random()),
-          life: 1,
-          maxLife: 0.45,
-          color: 'rgba(255,240,220,0.85)',
-          size: this.cell * (0.05 + Math.random() * 0.06),
-          star: false,
-          spin: 0,
-        });
+        const puffs = 3;
+        for (let i = 0; i < puffs; i++) {
+          const spread = (Math.random() - 0.5) * this.cell * 0.5;
+          this.particles.push({
+            x: x - (sc.vertical ? spread : this.cell * (0.3 + Math.random() * 0.3)),
+            y: y - (sc.vertical ? this.cell * (0.3 + Math.random() * 0.3) : -spread) + this.cell * 0.16,
+            vx: sc.vertical ? (Math.random() - 0.5) * 2.4 : -1.8 - Math.random() * 2.2,
+            vy: sc.vertical ? -1.8 - Math.random() * 2.0 : -1.1 - Math.random() * 1.3,
+            life: 1,
+            maxLife: 0.75 + Math.random() * 0.5,
+            color: i === 0 ? 'rgba(255,248,236,0.95)' : 'rgba(226,210,186,0.9)',
+            size: this.cell * (0.09 + Math.random() * 0.13),
+            star: false,
+            spin: 0,
+          });
+        }
       }
     }
     if (this.scoots.length) this.scoots = this.scoots.filter((sc) => sc.life > 0);
@@ -1333,11 +1430,22 @@ export class GameRenderer {
     }
 
     if (step.type === 'clear') {
-      const k = easeInQuad(t);
+      const { wipeAt, pending } = this.active!;
       for (const sprite of dying) {
+        const start = wipeAt.get(sprite.id);
+        // Without a sweep every piece pops together; with one, each waits
+        // until the dog is on top of it and then pops quickly.
+        const local = start === undefined ? t : Math.max(0, Math.min(1, (t - start) / 0.14));
+        const k = easeInQuad(local);
         sprite.scale = 1 + k * 0.45 - k * 1.45;
         sprite.alpha = 1 - k;
         sprite.spin = k * 1.8;
+      }
+      for (const entry of pending) {
+        if (!entry.done && t >= entry.at) {
+          entry.done = true;
+          entry.apply();
+        }
       }
     }
   }
