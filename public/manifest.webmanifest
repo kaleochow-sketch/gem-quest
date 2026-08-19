@@ -1,13 +1,21 @@
 {
   "name": "Gem Quest",
   "short_name": "Gem Quest",
-  "description": "A match-3 puzzle adventure across 150 progressively harder levels.",
+  "description": "A match-3 puzzle adventure across 1000 progressively harder levels.",
+  "id": "/gem-quest/",
   "start_url": ".",
+  "scope": ".",
   "display": "standalone",
+  "display_override": ["standalone", "fullscreen"],
   "orientation": "portrait",
-  "background_color": "#141026",
-  "theme_color": "#141026",
+  "background_color": "#100b20",
+  "theme_color": "#100b20",
+  "categories": ["games", "puzzle"],
+  "lang": "en",
   "icons": [
-    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
   ]
 }

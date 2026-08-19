@@ -12,6 +12,13 @@
     <meta name="description" content="Gem Quest — a match-3 puzzle adventure across 150 levels." />
     <title>Gem Quest</title>
     <link rel="manifest" href="manifest.webmanifest" />
+    <!-- iOS has no manifest icon support; it needs its own tags. -->
+    <link rel="apple-touch-icon" href="icon-180.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
+    <link rel="icon" type="image/svg+xml" href="icon.svg" />
+    <meta name="apple-mobile-web-app-title" content="Gem Quest" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="application-name" content="Gem Quest" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
@@ -23,6 +30,8 @@
             <span class="brand-mark">◆</span>
             <span class="brand-name">Gem Quest</span>
           </div>
+          <button class="icon-btn icon-btn-sm" id="btn-help" type="button" aria-label="How to play">?</button>
+          <button class="icon-btn icon-btn-sm" id="btn-share" type="button" aria-label="Share">↗</button>
           <div class="wallet">
             <button class="chip" id="chip-lives" type="button">
               <span class="chip-icon">❤️</span><span id="lives-count">5</span>
@@ -79,6 +88,17 @@
         </div>
         <div class="powerbar" id="powerbar"></div>
       </section>
+
+      <!-- Install prompt -->
+      <div class="install-bar" id="install-bar">
+        <img src="icon-192.png" alt="" class="install-icon" />
+        <div class="install-copy">
+          <strong>Install Gem Quest</strong>
+          <small id="install-hint">Play full screen, and offline</small>
+        </div>
+        <button class="install-go" id="install-go" type="button">Install</button>
+        <button class="install-close" id="install-close" type="button" aria-label="Dismiss">✕</button>
+      </div>
 
       <!-- Modals -->
       <div class="overlay" id="overlay">

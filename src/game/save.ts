@@ -30,6 +30,10 @@ export interface Profile {
   /** Epoch ms the life timer last ticked. */
   livesUpdatedAt: number;
   soundOn: boolean;
+  /** Tutorial cards already shown. */
+  seen?: string[];
+  /** The install banner was dismissed. */
+  installDismissed?: boolean;
   /** Developer tools unlocked (see the Dev tab in the shop). */
   dev?: boolean;
   /** Purchases stop deducting coins. */
@@ -49,6 +53,8 @@ function defaultProfile(): Profile {
     lives: 5,
     livesUpdatedAt: Date.now(),
     soundOn: true,
+    seen: [],
+    installDismissed: false,
     dev: false,
     infiniteCoins: false,
     infiniteLives: false,
@@ -68,6 +74,7 @@ export function loadProfile(): Profile {
       upgrades: { ...base.upgrades, ...(parsed.upgrades ?? {}) },
       inventory: { ...base.inventory, ...(parsed.inventory ?? {}) },
       levels: parsed.levels ?? {},
+      seen: parsed.seen ?? [],
       version: PROFILE_VERSION,
     };
     // v2 introduced Lightning; make sure existing saves get one to try.
@@ -149,6 +156,18 @@ export function recordResult(
   };
   if (levelId >= profile.unlocked) profile.unlocked = levelId + 1;
   return { firstClear };
+}
+
+/** True the first time a tutorial card is requested; false thereafter. */
+export function markSeen(profile: Profile, key: string): boolean {
+  const seen = profile.seen ?? (profile.seen = []);
+  if (seen.includes(key)) return false;
+  seen.push(key);
+  return true;
+}
+
+export function hasSeen(profile: Profile, key: string): boolean {
+  return (profile.seen ?? []).includes(key);
 }
 
 export function totalStars(profile: Profile): number {

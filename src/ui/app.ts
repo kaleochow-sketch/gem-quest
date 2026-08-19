@@ -1,4 +1,5 @@
 import { GameRenderer, GEM_COLORS, GEM_NAMES } from '../render/renderer.js';
+import { qrSvg } from './qr.js';
 import { Pos } from '../engine/types.js';
 import {
   EPISODES,
@@ -44,6 +45,8 @@ import {
   msToNextLife,
   recordResult,
   refillLives,
+  hasSeen,
+  markSeen,
   resetProfile,
   saveProfile,
   spendLife,
@@ -85,6 +88,9 @@ export class App {
   private rafHandle = 0;
 
   private canvas: HTMLCanvasElement;
+  /** Stashed beforeinstallprompt event, where the browser fires one. */
+  private installEvent: { prompt: () => void; userChoice: Promise<unknown> } | null = null;
+
 
   /** Current session, exposed for debugging and automated play-throughs. */
   get activeSession(): LevelSession | null {
@@ -100,8 +106,10 @@ export class App {
 
     this.bindChrome();
     this.bindBoardInput();
+    this.bindInstall();
     this.renderMap();
     this.refreshWallet();
+    this.maybeShowIntro();
 
     window.addEventListener('resize', () => {
       if (this.screen === 'game' && this.session) this.renderer.layout();
@@ -139,6 +147,8 @@ export class App {
       this.show('shop');
     });
     $('chip-lives').addEventListener('click', () => this.showLivesInfo());
+    $('btn-share').addEventListener('click', () => this.showShare());
+    $('btn-help').addEventListener('click', () => this.showTeach(['intro', 'specials'], null, true));
 
     // Seven quick taps on the ◆ reveals the dev tools. It has no other
     // action, so this cannot fire by accident during normal play.
@@ -161,6 +171,117 @@ export class App {
       this.shopTab = 'upgrades';
       this.renderShop();
       this.show('shop');
+    });
+  }
+
+  /** True when already running as an installed app. */
+  private get isStandalone(): boolean {
+    return (
+      window.matchMedia?.('(display-mode: standalone)').matches ||
+      (navigator as unknown as { standalone?: boolean }).standalone === true
+    );
+  }
+
+  private get isIos(): boolean {
+    return /iphone|ipad|ipod/i.test(navigator.userAgent);
+  }
+
+  /**
+   * Android and desktop Chrome fire beforeinstallprompt, so the banner can
+   * install directly. iOS has no such API, so it gets instructions instead.
+   */
+  private bindInstall(): void {
+    const bar = $('install-bar');
+
+    window.addEventListener('beforeinstallprompt', (event) => {
+      event.preventDefault();
+      this.installEvent = event as unknown as { prompt: () => void; userChoice: Promise<unknown> };
+      this.showInstallBar();
+    });
+
+    window.addEventListener('appinstalled', () => {
+      bar.dataset.open = 'false';
+      this.toast('Installed — look for Gem Quest on your home screen');
+    });
+
+    $('install-close').addEventListener('click', () => {
+      bar.dataset.open = 'false';
+      this.profile.installDismissed = true;
+      saveProfile(this.profile);
+    });
+
+    $('install-go').addEventListener('click', () => {
+      if (this.installEvent) {
+        this.installEvent.prompt();
+        this.installEvent = null;
+        bar.dataset.open = 'false';
+        return;
+      }
+      this.showIosInstall();
+    });
+
+    // iOS never fires the event, so offer the banner there directly.
+    if (this.isIos && !this.isStandalone && !this.profile.installDismissed) {
+      $('install-hint').textContent = 'Add to your home screen';
+      $('install-go').textContent = 'How';
+      setTimeout(() => this.showInstallBar(), 1200);
+    }
+  }
+
+  private showInstallBar(): void {
+    if (this.isStandalone || this.profile.installDismissed) return;
+    $('install-bar').dataset.open = 'true';
+  }
+
+  private showIosInstall(): void {
+    this.openModal(`
+      <h2>Add to Home Screen</h2>
+      <p class="lead">Gem Quest runs as a full-screen app, and works with no connection.</p>
+      <ol class="steps">
+        <li>Tap the <strong>Share</strong> button in Safari&nbsp;<span class="ios-share">􀈂</span> (the square with an arrow).</li>
+        <li>Scroll and choose <strong>Add to Home Screen</strong>.</li>
+        <li>Tap <strong>Add</strong>. The dog appears on your home screen.</li>
+      </ol>
+      <div class="btn-row"><button class="btn btn-primary" data-close>Got it</button></div>
+    `);
+    this.wireClose();
+  }
+
+  /** The share sheet: a link, a QR code, and the native share sheet. */
+  private showShare(): void {
+    const url = location.href.split('#')[0].split('?')[0];
+    this.openModal(`
+      <h2>Share Gem Quest</h2>
+      <p class="lead">Anyone can play straight from the link — no account, no install needed.</p>
+      <div class="qr-frame">${qrSvg(url, { light: '#ffffff', dark: '#141a33' })}</div>
+      <div class="share-url" id="share-url">${url}</div>
+      <div class="btn-row">
+        <button class="btn" id="share-copy">Copy link</button>
+        <button class="btn btn-primary" id="share-native">Share</button>
+      </div>
+      <div class="btn-row"><button class="btn" data-close>Close</button></div>
+    `);
+    this.wireClose();
+
+    $('share-copy').addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(url);
+        this.toast('Link copied');
+      } catch {
+        // Clipboard access can be refused; the link is on screen to read.
+        this.toast('Copy blocked — the link is shown above');
+      }
+    });
+    $('share-native').addEventListener('click', async () => {
+      if (navigator.share) {
+        try {
+          await navigator.share({ title: 'Gem Quest', text: 'Play Gem Quest', url });
+        } catch {
+          /* the user dismissed the sheet */
+        }
+      } else {
+        this.toast('Sharing is not supported here — copy the link instead');
+      }
     });
   }
 
@@ -767,13 +888,143 @@ export class App {
   }
 
   /* ---------------------------------------------------------------- *
+   * Teaching cards
+   * ---------------------------------------------------------------- */
+
+  /** One card per mechanic, shown the first time it can appear. */
+  private static readonly CARDS: Record<string, { icon: string; title: string; body: string }> = {
+    intro: {
+      icon: '🎯',
+      title: 'Match three',
+      body:
+        'Swipe a piece onto a neighbour, or tap one then tap next to it. ' +
+        'Line up three or more of the same thing and they clear.',
+    },
+    specials: {
+      icon: '🐕',
+      title: 'Match four for the dog',
+      body:
+        'Four in a row and the dog turns up. Set him off and he scoots the ' +
+        'whole row or column, clearing everything he drags past. Five in a ' +
+        'row makes a colour bomb.',
+    },
+    jelly: {
+      icon: '🟦',
+      title: 'Blue jelly',
+      body:
+        'Clear a piece sitting on jelly to peel one layer away. The dots show ' +
+        'how many layers are left. Clear every layer to win.',
+    },
+    blockers: {
+      icon: '📦',
+      title: 'Crates and stones',
+      body:
+        'Crates break when you match right beside them. Stones ignore that — ' +
+        'only a dog sweep or a bomb will shift those.',
+    },
+    locks: {
+      icon: '⛓',
+      title: 'Chains',
+      body: 'A chained piece cannot be moved. Match it to snap the chain, then it frees up.',
+    },
+    ingredients: {
+      icon: '🌟',
+      title: 'Star fruit',
+      body:
+        'Star fruit have to drop off the bottom of the board. Clear the pieces ' +
+        'underneath them so they can fall.',
+    },
+    fuse: {
+      icon: '🧨',
+      title: 'Fuse pieces',
+      body:
+        'A fuse counts down one every move you make. Clear it before it reaches ' +
+        'zero — if any fuse runs out, you lose the level straight away.',
+    },
+  };
+
+  /** Cards this level would introduce that the player has not seen. */
+  private teachFor(def: LevelDef): string[] {
+    const keys: string[] = [];
+    const want = (key: string, when: boolean) => {
+      if (when && !hasSeen(this.profile, key)) keys.push(key);
+    };
+    want('intro', true);
+    want('specials', def.id >= 3);
+    want('jelly', def.jellySingle + def.jellyDouble + def.jellyTriple > 0);
+    want('blockers', def.crates + def.stones > 0);
+    want('locks', def.locks > 0);
+    want('ingredients', def.ingredients > 0);
+    want('fuse', def.fuses > 0);
+    return keys;
+  }
+
+  /**
+   * Steps through a set of cards. `onDone` runs after the last one; when
+   * `review` is true the cards are shown again without re-marking them.
+   */
+  private showTeach(keys: string[], onDone: (() => void) | null, review = false): void {
+    const cards = keys.filter((k) => App.CARDS[k]);
+    if (!cards.length) {
+      onDone?.();
+      return;
+    }
+
+    let index = 0;
+    const render = () => {
+      const key = cards[index];
+      const card = App.CARDS[key];
+      const last = index === cards.length - 1;
+      this.openModal(`
+        <div class="teach-icon">${card.icon}</div>
+        <h2>${card.title}</h2>
+        <p class="lead">${card.body}</p>
+        ${
+          cards.length > 1
+            ? `<div class="teach-dots">${cards
+                .map((_, i) => `<i data-on="${i === index}"></i>`)
+                .join('')}</div>`
+            : ''
+        }
+        <div class="btn-row">
+          <button class="btn btn-primary" id="teach-next">${last ? 'Got it' : 'Next'}</button>
+        </div>
+      `);
+      $('teach-next').addEventListener('click', () => {
+        if (!review) markSeen(this.profile, key);
+        index++;
+        if (index < cards.length) {
+          render();
+          return;
+        }
+        if (!review) saveProfile(this.profile);
+        this.closeModal();
+        onDone?.();
+      });
+    };
+    render();
+  }
+
+  /** First launch: explain the basics before anything else. */
+  private maybeShowIntro(): void {
+    if (hasSeen(this.profile, 'intro') || Object.keys(this.profile.levels).length) return;
+    this.showTeach(['intro'], null);
+  }
+
+  /* ---------------------------------------------------------------- *
    * Pre-level
    * ---------------------------------------------------------------- */
 
   private openPreLevel(levelId: number): void {
+    const def = getLevel(levelId);
+    const teach = this.teachFor(def);
+    if (teach.length) {
+      this.showTeach(teach, () => this.openPreLevel(levelId));
+      return;
+    }
+
     this.levelId = levelId;
     this.chosenBoosters = [];
-    const def = getLevel(levelId);
     const stars = starsFor(this.profile, levelId);
 
     const boosters = BOOSTERS.map((b) => {

@@ -20,11 +20,9 @@
       <stop offset="1" stop-color="#e6d2b6"/>
     </radialGradient>
   </defs>
-
-  <rect width="512" height="512" rx="112" fill="url(#tile)"/>
-  <rect x="10" y="10" width="492" height="240" rx="104" fill="url(#sheen)"/>
-
-  <g transform="translate(256 268)">
+  <rect width="512" height="512" fill="url(#tile)"/>
+  <g transform="translate(256 256) scale(0.6) translate(-256 -260)">
+    <g transform="translate(256 268)">
     <g fill="url(#ear)" stroke="rgba(90,55,20,0.4)" stroke-width="5">
       <ellipse cx="-118" cy="50" rx="52" ry="118" transform="rotate(-8 -118 50)"/>
       <ellipse cx="118" cy="50" rx="52" ry="118" transform="rotate(8 118 50)"/>
@@ -41,5 +39,7 @@
       <circle cx="-47" cy="-38" r="7"/>
       <circle cx="61" cy="-38" r="7"/>
     </g>
+  </g>
+
   </g>
 </svg>
