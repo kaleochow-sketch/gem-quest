@@ -141,6 +141,8 @@ export class App {
       this.openPreLevel(Math.min(this.profile.unlocked, TOTAL_LEVELS));
     });
     $('btn-quit').addEventListener('click', () => this.confirmQuit());
+    // Dev-only, and sits in the level itself where a restart is actually wanted.
+    $('btn-restart').addEventListener('click', () => this.dev.restart());
     $('chip-coins').addEventListener('click', () => {
       this.shopTab = 'boosters';
       this.renderShop();
@@ -287,8 +289,10 @@ export class App {
 
   private show(screen: ScreenId): void {
     this.screen = screen;
-    // The install prompt stays out of the way while a level is in play.
-    $('install-bar').dataset.hidden = String(screen === 'game');
+    // The prompt lives on the map only: the shop has no tab bar for it to sit
+    // above so it covered the last card, and it has no business over a board.
+    $('install-bar').dataset.hidden = String(screen !== 'map');
+    ($('btn-restart') as HTMLButtonElement).hidden = !(screen === 'game' && this.profile.dev);
     for (const id of ['map', 'shop', 'game'] as ScreenId[]) {
       $(`screen-${id}`).dataset.active = String(id === screen);
     }
@@ -654,6 +658,14 @@ export class App {
         sub: 'Only works while a level is open.',
         run: () => (this.dev.win() ? 'Level completed' : 'No level in progress'),
       },
+      {
+        label: `Restart level ${this.levelId}`,
+        sub: 'Replays it on a fresh board. Costs no life and no boosters.',
+        run: () => {
+          this.dev.restart();
+          return `Restarted level ${this.levelId}`;
+        },
+      },
     ];
 
     for (const action of actions) {
@@ -676,6 +688,22 @@ export class App {
       card.appendChild(btn);
       body.appendChild(card);
     }
+
+    // Destructive, so it is separated out and asks first.
+    body.appendChild(this.sectionTitle('Danger zone'));
+    const wipe = document.createElement('div');
+    wipe.className = 'card';
+    wipe.innerHTML = `<div class="card-icon">🧨</div>
+      <div class="card-body"><div class="card-title">Reset everything</div>
+      <div class="card-sub">Wipes stars, coins, upgrades, items and the dev toggles.
+      Puts the profile back to a brand-new install.</div></div>`;
+    const wipeBtn = document.createElement('button');
+    wipeBtn.className = 'buy-btn buy-btn-danger';
+    wipeBtn.type = 'button';
+    wipeBtn.textContent = 'Reset';
+    wipeBtn.addEventListener('click', () => this.confirmReset());
+    wipe.appendChild(wipeBtn);
+    body.appendChild(wipe);
   }
 
   /**
@@ -695,6 +723,8 @@ export class App {
           'gemQuest.dev.maxUpgrades()  max every upgrade',
           'gemQuest.dev.goto(id)       open a level',
           'gemQuest.dev.win()          complete the level in progress',
+          'gemQuest.dev.restart()      replay the current level, free',
+          'gemQuest.dev.resetAll()     wipe the profile back to new',
           'gemQuest.dev.panel()        show the in-game Dev tab',
           'gemQuest.dev.reset()        wipe the profile',
         ];
@@ -732,6 +762,17 @@ export class App {
         self.commitDev();
         self.openPreLevel(Math.max(1, Math.min(TOTAL_LEVELS, id)));
       },
+      /** Replays the current level on a fresh board, free of charge. */
+      restart(): boolean {
+        const id = self.session ? self.session.def.id : self.levelId;
+        self.levelId = id;
+        self.session = null;
+        self.resultShown = true;
+        self.closeModal();
+        self.chosenBoosters = [];
+        self.startLevel(true);
+        return true;
+      },
       win(): boolean {
         const session = self.session;
         if (!session || session.state !== 'playing') return false;
@@ -755,7 +796,13 @@ export class App {
       reset(): void {
         self.profile = resetProfile();
         self.mapRegion = 0;
+        self.levelId = 1;
+        self.session = null;
         self.show('map');
+      },
+      /** Same as reset(); named for symmetry with the panel button. */
+      resetAll(): void {
+        this.reset();
       },
     };
   }
@@ -863,8 +910,17 @@ export class App {
     `);
     this.wireClose();
     $('do-reset').addEventListener('click', () => {
+      // A reset from the dev panel keeps the panel open; you are plainly still
+      // developing, and otherwise it takes seven taps to get back in.
+      const wasDev = !!this.profile.dev;
       this.profile = resetProfile();
+      if (wasDev) {
+        this.profile.dev = true;
+        saveProfile(this.profile);
+      }
       this.mapRegion = 0;
+      this.levelId = 1;
+      this.session = null;
       this.closeModal();
       this.renderShop();
       this.show('map');
@@ -1131,12 +1187,18 @@ export class App {
    * Gameplay
    * ---------------------------------------------------------------- */
 
-  private startLevel(): void {
-    if (!spendLife(this.profile)) {
-      this.toast('Out of lives — they refill over time');
-      return;
+  /**
+   * @param free Skip the life and booster cost. Used by the dev restart, so
+   *   replaying a level while testing does not drain the profile.
+   */
+  private startLevel(free = false): void {
+    if (!free) {
+      if (!spendLife(this.profile)) {
+        this.toast('Out of lives — they refill over time');
+        return;
+      }
+      for (const id of this.chosenBoosters) consumeItem(this.profile, id);
     }
-    for (const id of this.chosenBoosters) consumeItem(this.profile, id);
     saveProfile(this.profile);
 
     const def = getLevel(this.levelId);

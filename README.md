@@ -139,7 +139,13 @@ profile — nothing is shared, synced, or visible to other players.
 - **Infinite coins** — purchases stop deducting, and power-ups are never used up.
 - **Infinite lives** — levels never cost a life, and start even at zero.
 - One-off actions: add a million coins, stock every item, unlock all 1000
-  levels, max every upgrade, refill lives, win the level in progress.
+  levels, max every upgrade, refill lives, win the level in progress, and
+  restart the current level on a fresh board at no cost.
+- A danger zone with **Reset everything**, which asks first and puts the
+  profile back to a brand-new install. A reset started from the dev panel
+  keeps the panel open.
+- While dev mode is on, a ⟳ button appears in a level so you can restart
+  without leaving it.
 
 The same tools are on the console, which is easier on desktop:
 
@@ -151,6 +157,8 @@ gemQuest.dev.unlockAll()
 gemQuest.dev.maxUpgrades()
 gemQuest.dev.goto(750)     // jump straight to a level
 gemQuest.dev.win()         // clear the level in progress
+gemQuest.dev.restart()     // replay the current level, free
+gemQuest.dev.resetAll()    // wipe the profile back to new
 ```
 
 ## Installing it as an app
