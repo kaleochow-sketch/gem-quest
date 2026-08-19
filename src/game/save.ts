@@ -31,6 +31,10 @@ export interface Profile {
   livesUpdatedAt: number;
   soundOn: boolean;
   musicOn: boolean;
+  /** Shown on challenge links you send. */
+  playerName?: string;
+  /** Results other players have sent you. */
+  challenges?: import('./leaderboard.js').Challenge[];
   /** Tutorial cards already shown. */
   seen?: string[];
   /** The install banner was dismissed. */
@@ -55,6 +59,8 @@ function defaultProfile(): Profile {
     livesUpdatedAt: Date.now(),
     soundOn: true,
     musicOn: true,
+    playerName: '',
+    challenges: [],
     seen: [],
     installDismissed: false,
     dev: false,
@@ -76,6 +82,7 @@ export function loadProfile(): Profile {
       upgrades: { ...base.upgrades, ...(parsed.upgrades ?? {}) },
       inventory: { ...base.inventory, ...(parsed.inventory ?? {}) },
       levels: parsed.levels ?? {},
+      challenges: parsed.challenges ?? [],
       seen: parsed.seen ?? [],
       version: PROFILE_VERSION,
     };

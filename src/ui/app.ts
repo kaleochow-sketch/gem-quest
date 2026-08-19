@@ -17,6 +17,18 @@ import {
   isRegionFinale,
   regionOf,
 } from '../game/levels.js';
+import {
+  Challenge,
+  addChallenge,
+  bestOn,
+  cleanName,
+  decodeChallenge,
+  encodeChallenge,
+  levelsCleared,
+  personalBest,
+  sortChallenges,
+  totalScore,
+} from '../game/leaderboard.js';
 import { LevelSession } from '../game/session.js';
 import {
   BOOSTERS,
@@ -92,7 +104,7 @@ export function shareUrl(): string {
 /** Replaced with the content hash at build time; 'dev' when unstamped. */
 export const BUILD_ID = '__BUILD__';
 
-type ScreenId = 'map' | 'shop' | 'game';
+type ScreenId = 'map' | 'shop' | 'game' | 'ranks';
 type ShopTab = 'boosters' | 'powerups' | 'upgrades' | 'dev';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -156,6 +168,7 @@ export class App {
 
     this.bindChrome();
     this.bindBoardInput();
+    this.takeChallengeFromUrl();
     this.bindInstall();
     this.renderMap();
     this.refreshWallet();
@@ -219,11 +232,8 @@ export class App {
         this.show('shop');
       }
     });
-    $('chip-stars').addEventListener('click', () => {
-      this.shopTab = 'upgrades';
-      this.renderShop();
-      this.show('shop');
-    });
+    $('chip-stars').addEventListener('click', () => this.show('ranks'));
+    $('btn-challenge').addEventListener('click', () => this.shareChallenge());
   }
 
   /** True when already running as an installed app. */
@@ -357,12 +367,13 @@ export class App {
     // above so it covered the last card, and it has no business over a board.
     $('install-bar').dataset.hidden = String(screen !== 'map');
     ($('btn-restart') as HTMLButtonElement).hidden = !(screen === 'game' && this.profile.dev);
-    for (const id of ['map', 'shop', 'game'] as ScreenId[]) {
+    for (const id of ['map', 'shop', 'game', 'ranks'] as ScreenId[]) {
       $(`screen-${id}`).dataset.active = String(id === screen);
     }
     if (screen === 'game') this.startLoop();
     else this.stopLoop();
     if (screen === 'map') this.renderMap();
+    if (screen === 'ranks') this.renderRanks();
     this.refreshWallet();
   }
 
@@ -518,6 +529,201 @@ export class App {
 
     row.appendChild(node);
     return row;
+  }
+
+  /* ---------------------------------------------------------------- *
+   * Leaderboard
+   * ---------------------------------------------------------------- */
+
+  /** A challenge link carries the sender's result in the query string. */
+  private takeChallengeFromUrl(): void {
+    const payload = new URLSearchParams(location.search).get('c');
+    if (!payload) return;
+    const challenge = decodeChallenge(payload);
+    // Strip it either way, so a reload does not re-apply it.
+    history.replaceState(null, '', location.pathname);
+    if (!challenge) return;
+
+    addChallenge(this.profile, challenge);
+    saveProfile(this.profile);
+
+    const already = bestOn(this.profile, challenge.level);
+    this.openModal(`
+      <div class="modal-tag">Challenge</div>
+      <h2>${this.escape(challenge.name)} challenges you</h2>
+      <p class="lead">Level ${challenge.level} · <strong>${challenge.score.toLocaleString()}</strong> points
+        ${'★'.repeat(challenge.stars)}${'☆'.repeat(3 - challenge.stars)}<br />
+        ${already ? `Your best there is ${already.toLocaleString()}.` : 'You have not played that level yet.'}</p>
+      <div class="btn-row">
+        <button class="btn" data-close>Later</button>
+        <button class="btn btn-primary" id="do-accept">Take it on</button>
+      </div>
+    `);
+    this.wireClose();
+    $('do-accept').addEventListener('click', () => {
+      this.closeModal();
+      if (challenge.level > this.profile.unlocked) {
+        this.toast(`Reach level ${challenge.level} first`);
+        this.show('ranks');
+        return;
+      }
+      this.openPreLevel(challenge.level);
+    });
+  }
+
+  private escape(text: string): string {
+    return text.replace(/[&<>"']/g, (ch) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]!,
+    );
+  }
+
+  private playerName(): string {
+    return cleanName(this.profile.playerName || 'Player');
+  }
+
+  private renderRanks(): void {
+    $('ranks-stars').textContent = String(totalStars(this.profile));
+    const body = $('ranks-body');
+    body.innerHTML = '';
+
+    const nameRow = document.createElement('div');
+    nameRow.className = 'name-row';
+    nameRow.innerHTML = `<input id="rank-name" maxlength="14" placeholder="Your name"
+      value="${this.escape(this.profile.playerName || '')}" />`;
+    body.appendChild(nameRow);
+    const input = $<HTMLInputElement>('rank-name');
+    input.addEventListener('change', () => {
+      this.profile.playerName = cleanName(input.value);
+      saveProfile(this.profile);
+      this.toast(`Name set to ${this.playerName()}`);
+    });
+
+    const stats = document.createElement('div');
+    stats.className = 'stat-grid';
+    stats.innerHTML = `
+      <div class="stat"><strong>${levelsCleared(this.profile)}</strong><small>Cleared</small></div>
+      <div class="stat"><strong>${totalStars(this.profile)}</strong><small>Stars</small></div>
+      <div class="stat"><strong>${this.compact(totalScore(this.profile))}</strong><small>Total</small></div>
+    `;
+    body.appendChild(stats);
+
+    const challenges = sortChallenges(this.profile);
+    if (challenges.length) {
+      body.appendChild(this.sectionTitle('Challenges'));
+      for (const c of challenges) body.appendChild(this.challengeRow(c));
+    }
+
+    body.appendChild(this.sectionTitle('Your best runs'));
+    const best = personalBest(this.profile);
+    if (!best.length) {
+      body.appendChild(this.blurbLine('Clear a level and your best scores will rank here.'));
+    }
+    best.forEach((row, i) => {
+      const el = document.createElement('div');
+      el.className = 'rank-row';
+      el.innerHTML = `
+        <div class="rank-pos">${i + 1}</div>
+        <div class="rank-main">
+          <div class="rank-title">Level ${row.level}</div>
+          <div class="rank-stars">${'★'.repeat(row.stars)}${'☆'.repeat(3 - row.stars)}</div>
+        </div>
+        <div class="rank-score">${row.score.toLocaleString()}</div>
+      `;
+      body.appendChild(el);
+    });
+
+    body.appendChild(
+      this.blurbLine(
+        'Scores are kept on this device. Challenge links let you compete directly ' +
+          'with anyone you send them to.',
+      ),
+    );
+  }
+
+  private challengeRow(c: Challenge): HTMLElement {
+    const mine = bestOn(this.profile, c.level);
+    const beaten = mine >= c.score;
+    const el = document.createElement('div');
+    el.className = 'rank-row';
+    el.dataset.beaten = String(beaten);
+    el.innerHTML = `
+      <div class="rank-pos">${beaten ? '✓' : '!'}</div>
+      <div class="rank-main">
+        <div class="rank-title">${this.escape(c.name)} · Level ${c.level}</div>
+        <div class="rank-sub">${
+          beaten
+            ? `Beaten — your ${mine.toLocaleString()} vs ${c.score.toLocaleString()}`
+            : `${c.score.toLocaleString()} to beat${mine ? ` · your best ${mine.toLocaleString()}` : ''}`
+        }</div>
+      </div>
+    `;
+    const btn = document.createElement('button');
+    btn.className = 'buy-btn';
+    btn.type = 'button';
+    btn.textContent = beaten ? 'Replay' : 'Beat it';
+    btn.addEventListener('click', () => {
+      if (c.level > this.profile.unlocked) {
+        this.toast(`Reach level ${c.level} first`);
+        return;
+      }
+      this.openPreLevel(c.level);
+    });
+    el.appendChild(btn);
+    return el;
+  }
+
+  private compact(n: number): string {
+    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+    if (n >= 10_000) return Math.round(n / 1000) + 'k';
+    return n.toLocaleString();
+  }
+
+  /** Builds a link that carries your best result for someone else to beat. */
+  private shareChallenge(): void {
+    const best = personalBest(this.profile, 1)[0];
+    if (!best) {
+      this.toast('Clear a level first, then challenge someone');
+      return;
+    }
+    const payload = encodeChallenge(this.playerName(), best.level, best.score, best.stars);
+    const url = `${shareUrl()}?c=${payload}`;
+    this.openModal(`
+      <div class="modal-tag">Challenge</div>
+      <h2>Beat this</h2>
+      <p class="lead">Level ${best.level} · <strong>${best.score.toLocaleString()}</strong> points.
+        Send this link and their game will show your score to beat.</p>
+      <div class="share-url">${this.escape(url)}</div>
+      <div class="btn-row">
+        <button class="btn" id="ch-copy">Copy link</button>
+        <button class="btn btn-primary" id="ch-share">Share</button>
+      </div>
+      <div class="btn-row"><button class="btn" data-close>Close</button></div>
+    `);
+    this.wireClose();
+    const copy = async () => {
+      try {
+        await navigator.clipboard.writeText(url);
+        this.toast('Challenge link copied');
+      } catch {
+        this.toast('Copy blocked — the link is shown above');
+      }
+    };
+    $('ch-copy').addEventListener('click', copy);
+    $('ch-share').addEventListener('click', async () => {
+      if (navigator.share) {
+        try {
+          await navigator.share({
+            title: 'Gem Quest',
+            text: `I scored ${best.score.toLocaleString()} on level ${best.level}. Beat it.`,
+            url,
+          });
+        } catch {
+          /* dismissed */
+        }
+      } else {
+        void copy();
+      }
+    });
   }
 
   /* ---------------------------------------------------------------- *
@@ -1322,6 +1528,8 @@ export class App {
     this.resultShown = false;
     this.resultRecorded = false;
     this.idleTime = 0;
+    this.hudKey = '';
+    this.renderer.showFps = !!this.profile.dev;
 
     // Tint the whole app with the episode's hue.
     this.setHue(EPISODES[def.episode].hue);
@@ -1335,9 +1543,22 @@ export class App {
     this.renderer.layout();
   }
 
+  private hudKey = '';
+
   private renderHud(): void {
     const session = this.session;
     if (!session) return;
+    // Called every frame; rebuilding the DOM each time is pure waste.
+    const fuseNow = session.board.lowestFuse();
+    const key = [
+      session.def.id,
+      session.movesLeft,
+      session.score,
+      fuseNow,
+      session.objectives.map((o) => o.current + '/' + o.target + (o.done ? '!' : '')).join(','),
+    ].join('|');
+    if (key === this.hudKey) return;
+    this.hudKey = key;
     $('game-level').textContent = String(session.def.id);
     $('game-moves').textContent = String(Math.max(0, session.movesLeft));
     $('game-score').textContent = session.score.toLocaleString();
@@ -1353,7 +1574,7 @@ export class App {
       })
       .join('');
 
-    const fuse = session.board.lowestFuse();
+    const fuse = fuseNow;
     const fuseChip =
       fuse !== null
         ? `<div class="goal goal-fuse" data-urgent="${fuse <= 3}">🧨<span class="goal-count">${fuse}</span></div>`

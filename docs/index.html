@@ -19,7 +19,7 @@
     <meta name="apple-mobile-web-app-title" content="Gem Quest" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="application-name" content="Gem Quest" />
-    <link rel="stylesheet" href="styles.css?v=c8c242b6ef" />
+    <link rel="stylesheet" href="styles.css?v=2a675e1d9b" />
   </head>
   <body>
     <div id="app">
@@ -77,6 +77,19 @@
         <div class="panel-scroll" id="shop-body"></div>
       </section>
 
+      <!-- Leaderboard -->
+      <section class="screen" id="screen-ranks">
+        <header class="topbar">
+          <button class="icon-btn" data-goto="map" type="button">←</button>
+          <h1>Leaderboard</h1>
+          <div class="chip"><span class="chip-icon">⭐</span><span id="ranks-stars">0</span></div>
+        </header>
+        <div class="panel-scroll" id="ranks-body"></div>
+        <div class="tabbar">
+          <button class="tab tab-primary" id="btn-challenge" type="button">Challenge a friend</button>
+        </div>
+      </section>
+
       <!-- Gameplay -->
       <section class="screen screen-game" id="screen-game">
         <header class="game-top">
@@ -107,6 +120,6 @@
         <div class="modal" id="modal"></div>
       </div>
     </div>
-    <script type="module" src="bundle.js?v=c8c242b6ef"></script>
+    <script type="module" src="bundle.js?v=2a675e1d9b"></script>
   </body>
 </html>

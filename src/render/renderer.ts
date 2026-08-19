@@ -1,6 +1,6 @@
 import { audio } from '../audio/audio.js';
 import { Board } from '../engine/board.js';
-import { Blocker, Gem, GemKind, Pos, Special, Step } from '../engine/types.js';
+import { Blocker, BlockerKind, Gem, GemKind, Pos, Special, Step } from '../engine/types.js';
 
 /**
  * Gem palette. Each colour also gets its own silhouette, so the board stays
@@ -188,6 +188,10 @@ export class GameRenderer {
 
   /** Gems are pre-rendered once per size so each frame is a cheap blit. */
   private gemCache = new Map<string, HTMLCanvasElement>();
+  /** Tray and cell wells never change between layouts, so they are painted once. */
+  private staticLayer: HTMLCanvasElement | null = null;
+  private jellyCache = new Map<number, HTMLCanvasElement>();
+  private blockerCache = new Map<string, HTMLCanvasElement>();
 
   private cell = 40;
   private originX = 0;
@@ -197,6 +201,10 @@ export class GameRenderer {
   private shake = 0;
   private nextSparkle = 0;
   private resizeObserver: ResizeObserver | null = null;
+
+  /** Draws a frame-rate readout, switched on with the dev tools. */
+  showFps = false;
+  private frameMs = 16.7;
 
   selection: Pos | null = null;
   hint: { a: Pos; b: Pos } | null = null;
@@ -280,7 +288,7 @@ export class GameRenderer {
   layout(): void {
     const rect = this.canvas.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return;
-    this.dpr = Math.min(window.devicePixelRatio || 1, 3);
+    this.dpr = Math.min(window.devicePixelRatio || 1, 2);
     this.canvas.width = Math.round(rect.width * this.dpr);
     this.canvas.height = Math.round(rect.height * this.dpr);
 
@@ -292,7 +300,10 @@ export class GameRenderer {
     this.originY = (rect.height - this.cell * this.board.height) / 2;
     // Cached art is size-specific.
     this.gemCache.clear();
+    this.jellyCache.clear();
+    this.blockerCache.clear();
     this.scootSprite = null;
+    this.staticLayer = null;
   }
 
   cellAt(clientX: number, clientY: number): Pos | null {
@@ -1413,6 +1424,8 @@ export class GameRenderer {
 
   tick(dt: number): void {
     this.time += dt;
+    // Smoothed, so the number is readable rather than flickering.
+    this.frameMs += (Math.min(200, dt * 1000) - this.frameMs) * 0.1;
 
     if (!this.active && this.queue.length) this.beginStep(this.queue.shift()!);
 
@@ -1593,8 +1606,8 @@ export class GameRenderer {
       ctx.translate((Math.random() - 0.5) * this.shake, (Math.random() - 0.5) * this.shake);
     }
 
-    this.drawFrame();
-    this.drawWells();
+    this.drawStatic();
+    this.drawBlockers();
     this.drawBeams();
     this.drawSprites();
     this.drawJelly();
@@ -1606,11 +1619,37 @@ export class GameRenderer {
     this.drawParticles();
     this.drawFloaters();
     this.drawBanner();
+    if (this.showFps) this.drawFps();
   }
 
-  /** The tray the board sits in. */
-  private drawFrame(): void {
+  private drawFps(): void {
     const ctx = this.ctx;
+    const fps = Math.round(1000 / Math.max(1, this.frameMs));
+    ctx.save();
+    ctx.font = '700 12px ui-monospace, monospace';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    const label = `${fps} fps  ${this.frameMs.toFixed(1)}ms`;
+    const w = ctx.measureText(label).width + 12;
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(4, 4, w, 20);
+    ctx.fillStyle = fps >= 50 ? '#3ddc84' : fps >= 25 ? '#ffc233' : '#ff5c7a';
+    ctx.fillText(label, 10, 8);
+    ctx.restore();
+  }
+
+  /**
+   * The tray and the empty cell wells, painted once per layout into an
+   * offscreen canvas. These used to be repainted every frame, gradients and
+   * drop shadow included, which is pure waste — they never change.
+   */
+  private buildStaticLayer(): HTMLCanvasElement {
+    const layer = document.createElement('canvas');
+    layer.width = this.canvas.width;
+    layer.height = this.canvas.height;
+    const ctx = layer.getContext('2d')!;
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+
     const w = this.cell * this.board.width;
     const h = this.cell * this.board.height;
     const inset = this.cell * 0.2;
@@ -1620,6 +1659,17 @@ export class GameRenderer {
     const rh = h + inset * 2;
     const radius = this.cell * 0.45;
 
+    const round = (rx: number, ry: number, rwid: number, rhei: number, r: number) => {
+      const rr = Math.min(r, rwid / 2, rhei / 2);
+      ctx.beginPath();
+      ctx.moveTo(rx + rr, ry);
+      ctx.arcTo(rx + rwid, ry, rx + rwid, ry + rhei, rr);
+      ctx.arcTo(rx + rwid, ry + rhei, rx, ry + rhei, rr);
+      ctx.arcTo(rx, ry + rhei, rx, ry, rr);
+      ctx.arcTo(rx, ry, rx + rwid, ry, rr);
+      ctx.closePath();
+    };
+
     ctx.save();
     ctx.shadowColor = 'rgba(0,0,0,0.55)';
     ctx.shadowBlur = this.cell * 0.6;
@@ -1628,38 +1678,31 @@ export class GameRenderer {
     fill.addColorStop(0, 'rgba(96, 74, 168, 0.42)');
     fill.addColorStop(1, 'rgba(28, 20, 58, 0.55)');
     ctx.fillStyle = fill;
-    this.roundRect(x, y, rw, rh, radius);
+    round(x, y, rw, rh, radius);
     ctx.fill();
     ctx.restore();
 
     ctx.strokeStyle = 'rgba(255,255,255,0.22)';
     ctx.lineWidth = 1.5;
-    this.roundRect(x + 0.75, y + 0.75, rw - 1.5, rh - 1.5, radius);
+    round(x + 0.75, y + 0.75, rw - 1.5, rh - 1.5, radius);
     ctx.stroke();
 
-    // Top edge catch-light.
     ctx.save();
     ctx.globalAlpha = 0.5;
     const sheen = ctx.createLinearGradient(0, y, 0, y + rh * 0.35);
     sheen.addColorStop(0, 'rgba(255,255,255,0.3)');
     sheen.addColorStop(1, 'rgba(255,255,255,0)');
     ctx.fillStyle = sheen;
-    this.roundRect(x + 2, y + 2, rw - 4, rh * 0.35, radius);
+    round(x + 2, y + 2, rw - 4, rh * 0.35, radius);
     ctx.fill();
     ctx.restore();
-  }
 
-  private drawWells(): void {
-    const ctx = this.ctx;
     for (let r = 0; r < this.board.height; r++) {
       for (let c = 0; c < this.board.width; c++) {
-        const cell = this.board.at(r, c)!;
-        if (cell.hole) continue;
-        const x = this.originX + c * this.cell;
-        const y = this.originY + r * this.cell;
-        const i = r * this.board.width + c;
-
-        const well = ctx.createLinearGradient(0, y, 0, y + this.cell);
+        if (this.board.at(r, c)!.hole) continue;
+        const cx = this.originX + c * this.cell;
+        const cy = this.originY + r * this.cell;
+        const well = ctx.createLinearGradient(0, cy, 0, cy + this.cell);
         if ((r + c) % 2 === 0) {
           well.addColorStop(0, 'rgba(0,0,0,0.26)');
           well.addColorStop(1, 'rgba(255,255,255,0.07)');
@@ -1668,59 +1711,100 @@ export class GameRenderer {
           well.addColorStop(1, 'rgba(255,255,255,0.04)');
         }
         ctx.fillStyle = well;
-        this.roundRect(x + 1.5, y + 1.5, this.cell - 3, this.cell - 3, this.cell * 0.24);
+        round(cx + 1.5, cy + 1.5, this.cell - 3, this.cell - 3, this.cell * 0.24);
         ctx.fill();
+      }
+    }
+    return layer;
+  }
 
-        const jelly = this.jelly[i];
-        if (jelly > 0) {
-          ctx.fillStyle = `rgba(120, 214, 255, ${0.1 + jelly * 0.06})`;
-          this.roundRect(x + 2.5, y + 2.5, this.cell - 5, this.cell - 5, this.cell * 0.22);
-          ctx.fill();
-        }
+  private drawStatic(): void {
+    if (!this.staticLayer) this.staticLayer = this.buildStaticLayer();
+    this.ctx.drawImage(
+      this.staticLayer,
+      0,
+      0,
+      this.staticLayer.width / this.dpr,
+      this.staticLayer.height / this.dpr,
+    );
+  }
 
-        const blocker = this.blockers[i];
-        if (blocker) this.drawBlocker(blocker, x, y);
+  /** Blockers, cached per kind and hit points and blitted. */
+  private blockerImage(kind: BlockerKind, hp: number): HTMLCanvasElement {
+    const key = `${kind}:${hp >= 2 ? 2 : 1}`;
+    let img = this.blockerCache.get(key);
+    if (img) return img;
+
+    const side = Math.ceil(this.cell * this.dpr);
+    img = document.createElement('canvas');
+    img.width = side;
+    img.height = side;
+    const g = img.getContext('2d')!;
+    g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    this.paintBlocker(g, kind, hp, this.cell);
+    this.blockerCache.set(key, img);
+    return img;
+  }
+
+  private drawBlockers(): void {
+    for (let r = 0; r < this.board.height; r++) {
+      for (let c = 0; c < this.board.width; c++) {
+        const blocker = this.blockers[r * this.board.width + c];
+        if (!blocker) continue;
+        const img = this.blockerImage(blocker.kind, blocker.hp);
+        this.ctx.drawImage(
+          img,
+          this.originX + c * this.cell,
+          this.originY + r * this.cell,
+          this.cell,
+          this.cell,
+        );
       }
     }
   }
 
-  private drawBlocker(blocker: Blocker, x: number, y: number): void {
-    const ctx = this.ctx;
-    const pad = this.cell * 0.07;
-    const size = this.cell - pad * 2;
+  /** Paints one blocker into a cache canvas at the origin. */
+  private paintBlocker(
+    ctx: CanvasRenderingContext2D,
+    kind: BlockerKind,
+    hp: number,
+    cell: number,
+  ): void {
+    const blocker = { kind, hp };
+    const x = 0;
+    const y = 0;
+    const pad = cell * 0.07;
+    const size = cell - pad * 2;
 
     ctx.save();
-    ctx.shadowColor = 'rgba(0,0,0,0.5)';
-    ctx.shadowBlur = this.cell * 0.16;
-    ctx.shadowOffsetY = this.cell * 0.05;
 
     if (blocker.kind === 'crate') {
-      const grad = ctx.createLinearGradient(x, y, x + this.cell * 0.4, y + this.cell);
+      const grad = ctx.createLinearGradient(x, y, x + cell * 0.4, y + cell);
       grad.addColorStop(0, blocker.hp >= 2 ? '#c08850' : '#e0a768');
       grad.addColorStop(1, blocker.hp >= 2 ? '#6b4318' : '#8d5b25');
       ctx.fillStyle = grad;
-      this.roundRect(x + pad, y + pad, size, size, this.cell * 0.16);
+      this.roundRect(x + pad, y + pad, size, size, cell * 0.16);
       ctx.fill();
       ctx.restore();
 
       ctx.strokeStyle = 'rgba(52,28,8,0.9)';
-      ctx.lineWidth = Math.max(2, this.cell * 0.05);
-      this.roundRect(x + pad, y + pad, size, size, this.cell * 0.16);
+      ctx.lineWidth = Math.max(2, cell * 0.05);
+      this.roundRect(x + pad, y + pad, size, size, cell * 0.16);
       ctx.stroke();
       ctx.beginPath();
-      ctx.moveTo(x + pad, y + this.cell / 2);
-      ctx.lineTo(x + pad + size, y + this.cell / 2);
+      ctx.moveTo(x + pad, y + cell / 2);
+      ctx.lineTo(x + pad + size, y + cell / 2);
       ctx.stroke();
       if (blocker.hp >= 2) {
         ctx.beginPath();
-        ctx.moveTo(x + this.cell / 2, y + pad);
-        ctx.lineTo(x + this.cell / 2, y + pad + size);
+        ctx.moveTo(x + cell / 2, y + pad);
+        ctx.lineTo(x + cell / 2, y + pad + size);
         ctx.stroke();
       }
       ctx.save();
       ctx.globalAlpha = 0.3;
       ctx.strokeStyle = '#ffe4bd';
-      ctx.lineWidth = Math.max(1, this.cell * 0.03);
+      ctx.lineWidth = Math.max(1, cell * 0.03);
       ctx.beginPath();
       ctx.moveTo(x + pad * 2, y + pad * 2);
       ctx.lineTo(x + pad + size - pad, y + pad * 2);
@@ -1728,30 +1812,30 @@ export class GameRenderer {
       ctx.restore();
     } else {
       const grad = ctx.createRadialGradient(
-        x + this.cell * 0.36,
-        y + this.cell * 0.32,
-        this.cell * 0.06,
-        x + this.cell / 2,
-        y + this.cell / 2,
-        this.cell * 0.58,
+        x + cell * 0.36,
+        y + cell * 0.32,
+        cell * 0.06,
+        x + cell / 2,
+        y + cell / 2,
+        cell * 0.58,
       );
       grad.addColorStop(0, '#a8afc0');
       grad.addColorStop(0.6, '#6f7688');
       grad.addColorStop(1, '#3c4252');
       ctx.fillStyle = grad;
-      this.roundRect(x + pad, y + pad, size, size, this.cell * 0.3);
+      this.roundRect(x + pad, y + pad, size, size, cell * 0.3);
       ctx.fill();
       ctx.restore();
 
       ctx.strokeStyle = 'rgba(16,20,30,0.85)';
-      ctx.lineWidth = Math.max(2, this.cell * 0.045);
-      this.roundRect(x + pad, y + pad, size, size, this.cell * 0.3);
+      ctx.lineWidth = Math.max(2, cell * 0.045);
+      this.roundRect(x + pad, y + pad, size, size, cell * 0.3);
       ctx.stroke();
       ctx.save();
       ctx.globalAlpha = 0.45;
       ctx.fillStyle = '#fff';
       ctx.beginPath();
-      ctx.ellipse(x + this.cell * 0.36, y + this.cell * 0.32, this.cell * 0.1, this.cell * 0.06, -0.6, 0, Math.PI * 2);
+      ctx.ellipse(x + cell * 0.36, y + cell * 0.32, cell * 0.1, cell * 0.06, -0.6, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
     }
@@ -1810,14 +1894,11 @@ export class GameRenderer {
         ctx.save();
         ctx.globalAlpha = sprite.alpha;
         ctx.translate(cx, cy);
-        ctx.shadowColor = urgent ? 'rgba(255,60,80,0.95)' : 'rgba(255,150,60,0.8)';
-        ctx.shadowBlur = this.cell * 0.3 * pulse;
         ctx.strokeStyle = urgent ? `rgba(255,70,90,${0.6 + pulse * 0.4})` : `rgba(255,170,70,${0.55 + pulse * 0.35})`;
         ctx.lineWidth = Math.max(2, this.cell * 0.075);
         ctx.beginPath();
         ctx.arc(0, 0, this.cell * 0.42, 0, Math.PI * 2);
         ctx.stroke();
-        ctx.shadowBlur = 0;
 
         const badge = this.cell * 0.19;
         ctx.fillStyle = urgent ? '#ff3b58' : '#1b1430';
@@ -1855,71 +1936,106 @@ export class GameRenderer {
    * opaque and fill their cell, so anything drawn underneath them is simply
    * not visible — this is the layer the player actually reads.
    */
+  /** One cached tile per layer count, so jelly costs a blit instead of a
+   *  clipped gradient and a blurred stroke on every cell, every frame. */
+  private jellyImage(layers: number): HTMLCanvasElement {
+    let img = this.jellyCache.get(layers);
+    if (img) return img;
+
+    const side = Math.ceil(this.cell * this.dpr);
+    img = document.createElement('canvas');
+    img.width = side;
+    img.height = side;
+    const g = img.getContext('2d')!;
+    g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    const cell = this.cell;
+    const round = (x: number, y: number, w: number, h: number, r: number) => {
+      const rr = Math.min(r, w / 2, h / 2);
+      g.beginPath();
+      g.moveTo(x + rr, y);
+      g.arcTo(x + w, y, x + w, y + h, rr);
+      g.arcTo(x + w, y + h, x, y + h, rr);
+      g.arcTo(x, y + h, x, y, rr);
+      g.arcTo(x, y, x + w, y, rr);
+      g.closePath();
+    };
+
+    const alpha = layers >= 3 ? 0.46 : layers >= 2 ? 0.34 : 0.22;
+    g.save();
+    round(1.5, 1.5, cell - 3, cell - 3, cell * 0.24);
+    g.clip();
+    const pane = g.createLinearGradient(0, 0, cell, cell);
+    pane.addColorStop(0, `rgba(150, 232, 255, ${alpha})`);
+    pane.addColorStop(1, `rgba(60, 140, 255, ${alpha})`);
+    g.fillStyle = pane;
+    g.fillRect(0, 0, cell, cell);
+
+    g.globalAlpha = 0.4;
+    g.fillStyle = 'rgba(255,255,255,0.85)';
+    g.beginPath();
+    g.moveTo(-cell * 0.1, cell * 0.72);
+    g.lineTo(cell * 0.5, -cell * 0.1);
+    g.lineTo(cell * 0.72, -cell * 0.1);
+    g.lineTo(cell * 0.12, cell * 0.72);
+    g.closePath();
+    g.fill();
+    g.restore();
+
+    // The rim glow is baked in here rather than blurred every frame.
+    g.strokeStyle = `rgba(196, 246, 255, ${0.55 + layers * 0.15})`;
+    g.lineWidth = Math.max(1.5, cell * (layers >= 2 ? 0.07 : 0.045));
+    g.shadowColor = 'rgba(120, 220, 255, 0.9)';
+    g.shadowBlur = cell * 0.18;
+    round(2.5, 2.5, cell - 5, cell - 5, cell * 0.22);
+    g.stroke();
+    g.shadowBlur = 0;
+
+    if (layers >= 2) {
+      g.fillStyle = 'rgba(255,255,255,0.95)';
+      g.strokeStyle = 'rgba(20,60,90,0.6)';
+      g.lineWidth = Math.max(0.8, cell * 0.018);
+      for (let k = 0; k < layers; k++) {
+        g.beginPath();
+        g.arc(
+          cell / 2 + (k - (layers - 1) / 2) * cell * 0.17,
+          cell - cell * 0.14,
+          cell * 0.05,
+          0,
+          Math.PI * 2,
+        );
+        g.fill();
+        g.stroke();
+      }
+    }
+
+    this.jellyCache.set(layers, img);
+    return img;
+  }
+
+  /**
+   * Jelly, drawn over the pieces as a pane of tinted glass. The pieces are
+   * opaque and fill their cell, so anything drawn underneath them is simply
+   * not visible — this is the layer the player actually reads.
+   */
   private drawJelly(): void {
     const ctx = this.ctx;
     for (let r = 0; r < this.board.height; r++) {
       for (let c = 0; c < this.board.width; c++) {
         const layers = this.jelly[r * this.board.width + c];
         if (!layers) continue;
-        const x = this.originX + c * this.cell;
-        const y = this.originY + r * this.cell;
-        const shimmer = 0.85 + Math.sin(this.time * 2.2 + (r + c) * 0.7) * 0.15;
-        const alpha = (layers >= 3 ? 0.46 : layers >= 2 ? 0.34 : 0.22) * shimmer;
-
-        ctx.save();
-        this.roundRect(x + 1.5, y + 1.5, this.cell - 3, this.cell - 3, this.cell * 0.24);
-        ctx.clip();
-
-        const pane = ctx.createLinearGradient(x, y, x + this.cell, y + this.cell);
-        pane.addColorStop(0, `rgba(150, 232, 255, ${alpha})`);
-        pane.addColorStop(1, `rgba(60, 140, 255, ${alpha})`);
-        ctx.fillStyle = pane;
-        ctx.fillRect(x, y, this.cell, this.cell);
-
-        // Diagonal glass streak.
-        ctx.globalAlpha = 0.4 * shimmer;
-        ctx.fillStyle = 'rgba(255,255,255,0.85)';
-        ctx.beginPath();
-        ctx.moveTo(x - this.cell * 0.1, y + this.cell * 0.72);
-        ctx.lineTo(x + this.cell * 0.5, y - this.cell * 0.1);
-        ctx.lineTo(x + this.cell * 0.72, y - this.cell * 0.1);
-        ctx.lineTo(x + this.cell * 0.12, y + this.cell * 0.72);
-        ctx.closePath();
-        ctx.fill();
-        ctx.restore();
-
-        // Bright rim so the edge of the jelly is unmistakable.
-        ctx.save();
-        ctx.strokeStyle = `rgba(196, 246, 255, ${0.55 + layers * 0.15})`;
-        ctx.lineWidth = Math.max(1.5, this.cell * (layers >= 2 ? 0.07 : 0.045));
-        ctx.shadowColor = 'rgba(120, 220, 255, 0.9)';
-        ctx.shadowBlur = this.cell * 0.18;
-        this.roundRect(x + 2.5, y + 2.5, this.cell - 5, this.cell - 5, this.cell * 0.22);
-        ctx.stroke();
-        ctx.restore();
-
-        // Layer pips.
-        if (layers >= 2) {
-          ctx.save();
-          ctx.fillStyle = 'rgba(255,255,255,0.95)';
-          ctx.strokeStyle = 'rgba(20,60,90,0.6)';
-          ctx.lineWidth = Math.max(0.8, this.cell * 0.018);
-          for (let k = 0; k < layers; k++) {
-            ctx.beginPath();
-            ctx.arc(
-              x + this.cell / 2 + (k - (layers - 1) / 2) * this.cell * 0.17,
-              y + this.cell - this.cell * 0.14,
-              this.cell * 0.05,
-              0,
-              Math.PI * 2,
-            );
-            ctx.fill();
-            ctx.stroke();
-          }
-          ctx.restore();
-        }
+        // A cheap shimmer that does not need the tile repainting.
+        ctx.globalAlpha = 0.85 + Math.sin(this.time * 2.2 + (r + c) * 0.7) * 0.15;
+        const img = this.jellyImage(Math.min(3, layers));
+        ctx.drawImage(
+          img,
+          this.originX + c * this.cell,
+          this.originY + r * this.cell,
+          this.cell,
+          this.cell,
+        );
       }
     }
+    ctx.globalAlpha = 1;
   }
 
   private drawOverlays(): void {
@@ -1964,11 +2080,12 @@ export class GameRenderer {
       const y = this.originY + this.selection.r * this.cell;
       const pulse = 0.6 + Math.sin(this.time * 8) * 0.4;
       ctx.save();
-      ctx.shadowColor = 'rgba(255,255,255,0.9)';
-      ctx.shadowBlur = this.cell * 0.3;
+      ctx.strokeStyle = `rgba(255,255,255,${pulse * 0.35})`;
+      ctx.lineWidth = Math.max(5, this.cell * 0.13);
+      this.roundRect(x + 2, y + 2, this.cell - 4, this.cell - 4, this.cell * 0.24);
+      ctx.stroke();
       ctx.strokeStyle = `rgba(255,255,255,${pulse})`;
       ctx.lineWidth = Math.max(2.5, this.cell * 0.06);
-      this.roundRect(x + 2, y + 2, this.cell - 4, this.cell - 4, this.cell * 0.24);
       ctx.stroke();
       ctx.restore();
     }
@@ -1989,14 +2106,15 @@ export class GameRenderer {
     if (this.hint && !this.busy) {
       const pulse = 0.4 + Math.sin(this.time * 5) * 0.3;
       ctx.save();
-      ctx.shadowColor = 'rgba(255,214,102,0.9)';
-      ctx.shadowBlur = this.cell * 0.28;
-      ctx.strokeStyle = `rgba(255,214,102,${pulse + 0.35})`;
-      ctx.lineWidth = Math.max(2.5, this.cell * 0.06);
       for (const p of [this.hint.a, this.hint.b]) {
         const x = this.originX + p.c * this.cell;
         const y = this.originY + p.r * this.cell;
+        ctx.strokeStyle = `rgba(255,214,102,${pulse * 0.3})`;
+        ctx.lineWidth = Math.max(5, this.cell * 0.13);
         this.roundRect(x + 3, y + 3, this.cell - 6, this.cell - 6, this.cell * 0.24);
+        ctx.stroke();
+        ctx.strokeStyle = `rgba(255,214,102,${pulse + 0.35})`;
+        ctx.lineWidth = Math.max(2.5, this.cell * 0.06);
         ctx.stroke();
       }
       ctx.restore();
@@ -2011,8 +2129,6 @@ export class GameRenderer {
       ctx.save();
       ctx.globalAlpha = life;
       ctx.strokeStyle = b.color;
-      ctx.shadowColor = b.color;
-      ctx.shadowBlur = this.cell * 0.6;
       ctx.lineCap = 'round';
       ctx.lineWidth = thickness;
       ctx.beginPath();
@@ -2112,8 +2228,6 @@ export class GameRenderer {
       ctx.save();
       ctx.globalAlpha = life * 0.85;
       ctx.strokeStyle = s.color;
-      ctx.shadowColor = s.color;
-      ctx.shadowBlur = this.cell * 0.5;
       ctx.lineWidth = s.width * life;
       ctx.beginPath();
       ctx.arc(s.x, s.y, s.radius, 0, Math.PI * 2);

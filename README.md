@@ -152,6 +152,22 @@ Browsers only permit audio to start inside a user gesture, so the engine is
 unlocked on the first tap. Both sound and music can be switched off in
 Shop → Upgrades → Sound, and the choice persists.
 
+## Competing
+
+The game is a static site with no backend, so there is nowhere to host a shared
+table of scores. Competition is done with links instead: a result is packed into
+a query string, and opening that link records the sender's score as a challenge
+to beat. No account, no server, nothing to moderate. Payloads arrive from a URL,
+so they are range-checked and rejected rather than trusted, and the query string
+is stripped after it is read.
+
+The Leaderboard screen (the ★ chip) shows your cleared count, stars and total,
+your best runs ranked by score, and any challenges you have been sent with
+whether you have beaten them.
+
+A genuinely global leaderboard would need a backend — that is a separate piece
+of work, and a decision about hosting and moderation.
+
 ## Dev tools
 
 Tap the ◆ beside the title **seven times** to reveal a 🛠 Dev tab in the shop.
