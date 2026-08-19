@@ -81,6 +81,15 @@ interface Scoot {
   color: string;
 }
 
+/** A patch of brown he leaves behind; the tile under it goes when it fades. */
+interface Smear {
+  x: number;
+  y: number;
+  size: number;
+  life: number;
+  seed: number;
+}
+
 interface Beam {
   x1: number;
   y1: number;
@@ -118,7 +127,34 @@ const easeInQuad = (t: number) => t * t;
 const easeInOutQuad = (t: number) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
 
 /** How long the dog takes to cross the board, in seconds. */
-const SCOOT_SECONDS = 1.15;
+const SCOOT_SECONDS = 2.6;
+/** How long his brown streak lingers on a tile before it clears. */
+const BROWN_SECONDS = 1.05;
+/** Number of shoves in one crossing. */
+const SCOOT_SHOVES = 6;
+/** Fraction of each shove spent moving; the rest is the pause after it. */
+const SHOVE_PUSH = 0.55;
+
+/**
+ * Start-stop travel: a real dog shoves forward, stops, shoves again. Progress
+ * advances during the first `SHOVE_PUSH` of each shove and holds still for the
+ * remainder.
+ */
+function shuffleEase(t: number): number {
+  const seg = 1 / SCOOT_SHOVES;
+  const i = Math.min(SCOOT_SHOVES - 1, Math.floor(t / seg));
+  const local = Math.min(1, (t - i * seg) / seg / SHOVE_PUSH);
+  return (i + easeInOutQuad(local)) / SCOOT_SHOVES;
+}
+
+/** Inverse of `shuffleEase`: when does he reach a point `p` along the path? */
+function shuffleArrival(p: number): number {
+  const clamped = Math.max(0, Math.min(1, p));
+  const i = Math.min(SCOOT_SHOVES - 1, Math.floor(clamped * SCOOT_SHOVES));
+  const frac = Math.min(1, clamped * SCOOT_SHOVES - i);
+  const push = frac < 0.5 ? Math.sqrt(frac / 2) : 1 - Math.sqrt((1 - frac) / 2);
+  return (i + push * SHOVE_PUSH) / SCOOT_SHOVES;
+}
 
 const COMBO_WORDS = ['', '', 'Nice!', 'Sweet!', 'Tasty!', 'Delicious!', 'Divine!'];
 
@@ -134,6 +170,7 @@ export class GameRenderer {
   private shockwaves: Shockwave[] = [];
   private beams: Beam[] = [];
   private scoots: Scoot[] = [];
+  private smears: Smear[] = [];
   /** Cached full-size scoot sprite, rebuilt whenever the cell size changes. */
   private scootSprite: HTMLCanvasElement | null = null;
   private banner: Banner | null = null;
@@ -187,6 +224,7 @@ export class GameRenderer {
     this.shockwaves = [];
     this.beams = [];
     this.scoots = [];
+    this.smears = [];
     this.banner = null;
     this.queue = [];
     this.active = null;
@@ -417,23 +455,46 @@ export class GameRenderer {
     g.strokeRect(-w / 2, -h / 2, w, h);
   }
 
+  /** A cluster of overlapping puffs, filled as one shape, so the edge reads
+   *  as fur rather than a smooth ellipse. */
+  private fluff(
+    g: CanvasRenderingContext2D,
+    puffs: [number, number, number][],
+    grow = 1,
+  ): void {
+    g.beginPath();
+    for (const [px, py, pr] of puffs) {
+      g.moveTo(px + pr * grow, py);
+      g.arc(px, py, pr * grow, 0, Math.PI * 2);
+    }
+    g.closePath();
+  }
+
   private paintDogFace(g: CanvasRenderingContext2D, u: number): void {
-    // Long caramel ears, hanging straight down beside the head.
-    const earGrad = g.createLinearGradient(0, -u * 0.5, 0, u * 0.95);
-    earGrad.addColorStop(0, '#e8b784');
-    earGrad.addColorStop(0.55, '#c78a4e');
-    earGrad.addColorStop(1, '#9a6532');
-    g.fillStyle = earGrad;
-    g.strokeStyle = 'rgba(90,55,20,0.4)';
-    g.lineWidth = Math.max(0.8, u * 0.05);
+    // Ears: shorter than before and built from puffs so they look fluffy.
+    const earPuffs: [number, number, number][] = [
+      [0, -u * 0.16, u * 0.25],
+      [-u * 0.04, u * 0.06, u * 0.27],
+      [u * 0.02, u * 0.26, u * 0.22],
+      [0, u * 0.4, u * 0.16],
+    ];
     for (const sx of [-1, 1]) {
       g.save();
-      g.translate(sx * u * 0.66, u * 0.28);
-      g.rotate(sx * 0.14);
-      g.beginPath();
-      g.ellipse(0, 0, u * 0.29, u * 0.66, 0, 0, Math.PI * 2);
+      g.translate(sx * u * 0.66, u * 0.12);
+      g.rotate(sx * 0.1);
+      g.scale(sx, 1);
+
+      g.fillStyle = 'rgba(74, 44, 14, 0.55)';
+      this.fluff(g, earPuffs, 1.1);
       g.fill();
-      g.stroke();
+
+      const ear = g.createLinearGradient(0, -u * 0.45, 0, u * 0.6);
+      ear.addColorStop(0, '#eec08e');
+      ear.addColorStop(0.55, '#c98d52');
+      ear.addColorStop(1, '#9c6733');
+      g.fillStyle = ear;
+      this.fluff(g, earPuffs, 1);
+      g.fill();
       g.restore();
     }
 
@@ -449,36 +510,43 @@ export class GameRenderer {
     // Muzzle.
     g.fillStyle = '#fffdf9';
     g.beginPath();
-    g.ellipse(0, u * 0.3, u * 0.44, u * 0.32, 0, 0, Math.PI * 2);
+    g.ellipse(0, u * 0.3, u * 0.46, u * 0.33, 0, 0, Math.PI * 2);
     g.fill();
 
     g.fillStyle = '#241d1a';
     for (const sx of [-1, 1]) {
       g.beginPath();
-      g.ellipse(sx * u * 0.3, -u * 0.16, u * 0.11, u * 0.14, 0, 0, Math.PI * 2);
+      g.ellipse(sx * u * 0.3, -u * 0.18, u * 0.11, u * 0.14, 0, 0, Math.PI * 2);
       g.fill();
     }
     // Nose.
     g.beginPath();
-    g.moveTo(-u * 0.15, u * 0.12);
-    g.lineTo(u * 0.15, u * 0.12);
-    g.lineTo(0, u * 0.32);
+    g.moveTo(-u * 0.15, u * 0.1);
+    g.lineTo(u * 0.15, u * 0.1);
+    g.lineTo(0, u * 0.28);
     g.closePath();
     g.fill();
 
+    // Smile: the two arcs that make a dog muzzle read as happy.
     g.strokeStyle = '#241d1a';
-    g.lineWidth = Math.max(1, u * 0.07);
+    g.lineWidth = Math.max(1, u * 0.075);
     g.lineCap = 'round';
     g.beginPath();
-    g.moveTo(0, u * 0.32);
-    g.lineTo(0, u * 0.44);
+    g.moveTo(0, u * 0.28);
+    g.lineTo(0, u * 0.4);
+    g.stroke();
+    g.beginPath();
+    g.arc(-u * 0.15, u * 0.38, u * 0.16, 0.05 * Math.PI, 0.95 * Math.PI);
+    g.stroke();
+    g.beginPath();
+    g.arc(u * 0.15, u * 0.38, u * 0.16, 0.05 * Math.PI, 0.95 * Math.PI);
     g.stroke();
 
     // Eye glints.
     g.fillStyle = 'rgba(255,255,255,0.95)';
     for (const sx of [-1, 1]) {
       g.beginPath();
-      g.arc(sx * u * 0.26, -u * 0.21, u * 0.04, 0, Math.PI * 2);
+      g.arc(sx * u * 0.26, -u * 0.23, u * 0.04, 0, Math.PI * 2);
       g.fill();
     }
   }
@@ -819,15 +887,24 @@ export class GameRenderer {
     g.fill();
     g.stroke();
 
-    // Floppy caramel ear, hanging down past the jaw.
-    const ear = g.createLinearGradient(0, -u * 2.2, 0, -u * 0.9);
-    ear.addColorStop(0, '#e8b784');
-    ear.addColorStop(1, '#9a6532');
-    g.fillStyle = ear;
-    g.beginPath();
-    g.ellipse(u * 0.82, -u * 1.5, u * 0.29, u * 0.72, 0.12, 0, Math.PI * 2);
+    // Fluffy caramel ear: shorter, and built from puffs like the tile face.
+    const earPuffs: [number, number, number][] = [
+      [0, -u * 0.34, u * 0.3],
+      [0, u * 0.06, u * 0.32],
+      [u * 0.04, u * 0.42, u * 0.24],
+    ];
+    g.save();
+    g.translate(u * 0.8, -u * 1.62);
+    g.fillStyle = 'rgba(74, 44, 14, 0.5)';
+    this.fluff(g, earPuffs, 1.12);
     g.fill();
-    g.stroke();
+    const ear = g.createLinearGradient(0, -u * 0.7, 0, u * 0.7);
+    ear.addColorStop(0, '#eec08e');
+    ear.addColorStop(1, '#9c6733');
+    g.fillStyle = ear;
+    this.fluff(g, earPuffs, 1);
+    g.fill();
+    g.restore();
 
     // Face.
     g.fillStyle = '#241d1a';
@@ -837,10 +914,16 @@ export class GameRenderer {
     g.beginPath();
     g.ellipse(u * 2.02, -u * 1.72, u * 0.2, u * 0.16, 0, 0, Math.PI * 2);
     g.fill();
-    // Tongue, because he is enjoying himself.
+    // Open, smiling mouth with the tongue out.
+    g.strokeStyle = '#241d1a';
+    g.lineWidth = Math.max(0.8, u * 0.16);
+    g.lineCap = 'round';
+    g.beginPath();
+    g.arc(u * 1.78, -u * 1.6, u * 0.34, 0.1 * Math.PI, 0.72 * Math.PI);
+    g.stroke();
     g.fillStyle = '#ff8fa8';
     g.beginPath();
-    g.ellipse(u * 1.86, -u * 1.32, u * 0.2, u * 0.3, 0.3, 0, Math.PI * 2);
+    g.ellipse(u * 1.84, -u * 1.28, u * 0.19, u * 0.28, 0.3, 0, Math.PI * 2);
     g.fill();
 
     g.restore();
@@ -974,10 +1057,15 @@ export class GameRenderer {
         const sweeps = this.spawnClearEffects(step);
 
         if (sweeps.length) {
-          // The wipe now runs at the dog's pace, so the step lasts as long
-          // as the sweep does.
-          duration = SCOOT_SECONDS * 1000;
-          const timeFor = (pos: Pos): number => {
+          // The step now outlasts the sweep: the dog crosses, then his brown
+          // takes a moment to clear, and only then does the tile go.
+          const total = SCOOT_SECONDS + BROWN_SECONDS;
+          duration = total * 1000;
+          const dogSpan = SCOOT_SECONDS / total;
+          const brownSpan = BROWN_SECONDS / total;
+
+          /** Normalised step time at which the dog reaches a cell. */
+          const arriveAt = (pos: Pos): number => {
             let soonest = 1;
             for (const sc of sweeps) {
               const cx = this.originX + (pos.c + 0.5) * this.cell;
@@ -985,34 +1073,51 @@ export class GameRenderer {
               const p = sc.vertical
                 ? (cy - sc.fromY) / (sc.toY - sc.fromY)
                 : (cx - sc.fromX) / (sc.toX - sc.fromX);
-              soonest = Math.min(soonest, Math.max(0, Math.min(1, p)));
+              soonest = Math.min(soonest, shuffleArrival(p));
             }
-            return soonest;
+            return soonest * dogSpan;
           };
 
           for (const { pos, gem } of step.cleared) {
             const sprite = this.spriteAt(pos.r, pos.c);
-            const at = timeFor(pos);
-            if (sprite) wipeAt.set(sprite.id, at);
+            const arrive = arriveAt(pos);
+            if (sprite) wipeAt.set(sprite.id, arrive + brownSpan);
             const color =
               gem.kind === GemKind.Ingredient
                 ? '#ffd166'
                 : gem.special === Special.Rainbow
                   ? '#ffffff'
                   : GEM_COLORS[gem.color % GEM_COLORS.length];
-            pending.push({ at, done: false, apply: () => this.burst(pos, color, 7, 1.2, false) });
+            const centre = this.centreOf(pos);
+            pending.push({
+              at: arrive,
+              done: false,
+              apply: () =>
+                this.smears.push({
+                  x: centre.x,
+                  y: centre.y,
+                  size: this.cell * 0.96,
+                  life: 1,
+                  seed: pos.r * 31 + pos.c * 17,
+                }),
+            });
+            pending.push({
+              at: arrive + brownSpan,
+              done: false,
+              apply: () => this.burst(pos, color, 7, 1.2, false),
+            });
           }
-          // Crates, jelly and chains give way as he passes over them too.
+          // Crates, jelly and chains give way with the tile above them.
           for (const entry of step.jelly) {
             pending.push({
-              at: timeFor(entry.pos),
+              at: arriveAt(entry.pos) + brownSpan,
               done: false,
               apply: () => (this.jelly[this.index(entry.pos)] = entry.layersLeft),
             });
           }
           for (const entry of step.damaged) {
             pending.push({
-              at: timeFor(entry.pos),
+              at: arriveAt(entry.pos) + brownSpan,
               done: false,
               apply: () => {
                 const i = this.index(entry.pos);
@@ -1024,7 +1129,7 @@ export class GameRenderer {
           }
           for (const pos of step.unlocked) {
             pending.push({
-              at: timeFor(pos),
+              at: arriveAt(pos) + brownSpan,
               done: false,
               apply: () => (this.locked[this.index(pos)] = false),
             });
@@ -1333,29 +1438,30 @@ export class GameRenderer {
     for (const b of this.beams) b.life -= dt * 2.6;
     if (this.beams.length) this.beams = this.beams.filter((b) => b.life > 0);
 
+    for (const sm of this.smears) sm.life -= dt / BROWN_SECONDS;
+    if (this.smears.length) this.smears = this.smears.filter((sm) => sm.life > 0);
+
     for (const sc of this.scoots) {
       sc.life -= dt / SCOOT_SECONDS;
-      // A proper dust cloud billowing out behind him.
-      if (sc.life > 0.08) {
-        const t = 1 - Math.max(0, sc.life);
+      // A little dust off his back feet. Kept light: it used to bury both
+      // the brown streak and the dog himself.
+      if (sc.life > 0.08 && Math.random() < 0.55) {
+        const t = shuffleEase(1 - Math.max(0, sc.life));
         const x = sc.fromX + (sc.toX - sc.fromX) * t;
         const y = sc.fromY + (sc.toY - sc.fromY) * t;
-        const puffs = 3;
-        for (let i = 0; i < puffs; i++) {
-          const spread = (Math.random() - 0.5) * this.cell * 0.5;
-          this.particles.push({
-            x: x - (sc.vertical ? spread : this.cell * (0.3 + Math.random() * 0.3)),
-            y: y - (sc.vertical ? this.cell * (0.3 + Math.random() * 0.3) : -spread) + this.cell * 0.16,
-            vx: sc.vertical ? (Math.random() - 0.5) * 2.4 : -1.8 - Math.random() * 2.2,
-            vy: sc.vertical ? -1.8 - Math.random() * 2.0 : -1.1 - Math.random() * 1.3,
-            life: 1,
-            maxLife: 0.75 + Math.random() * 0.5,
-            color: i === 0 ? 'rgba(255,248,236,0.95)' : 'rgba(226,210,186,0.9)',
-            size: this.cell * (0.09 + Math.random() * 0.13),
-            star: false,
-            spin: 0,
-          });
-        }
+        const spread = (Math.random() - 0.5) * this.cell * 0.3;
+        this.particles.push({
+          x: x - (sc.vertical ? spread : this.cell * (0.34 + Math.random() * 0.2)),
+          y: y - (sc.vertical ? this.cell * (0.34 + Math.random() * 0.2) : -spread) + this.cell * 0.2,
+          vx: sc.vertical ? (Math.random() - 0.5) * 1.4 : -0.9 - Math.random(),
+          vy: sc.vertical ? -0.9 - Math.random() : -0.5 - Math.random() * 0.6,
+          life: 1,
+          maxLife: 0.4 + Math.random() * 0.25,
+          color: 'rgba(214, 198, 176, 0.55)',
+          size: this.cell * (0.05 + Math.random() * 0.05),
+          star: false,
+          spin: 0,
+        });
       }
     }
     if (this.scoots.length) this.scoots = this.scoots.filter((sc) => sc.life > 0);
@@ -1470,7 +1576,8 @@ export class GameRenderer {
     this.drawSprites();
     this.drawJelly();
     this.drawOverlays();
-    // Drawn after the pieces so the dog passes in front of them.
+    // Drawn after the pieces so the brown and the dog pass in front of them.
+    this.drawSmears();
     this.drawScoots();
     this.drawShockwaves();
     this.drawParticles();
@@ -1918,6 +2025,37 @@ export class GameRenderer {
     return sprite;
   }
 
+  /** The brown he drags along, drawn over the tiles it still covers. */
+  private drawSmears(): void {
+    const ctx = this.ctx;
+    for (const sm of this.smears) {
+      const life = Math.max(0, Math.min(1, sm.life));
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, life * 1.15);
+      const grad = ctx.createLinearGradient(sm.x - sm.size / 2, sm.y, sm.x + sm.size / 2, sm.y);
+      grad.addColorStop(0, 'rgba(63, 36, 12, 0.85)');
+      grad.addColorStop(0.5, '#6b3f14');
+      grad.addColorStop(1, 'rgba(63, 36, 12, 0.85)');
+      ctx.fillStyle = grad;
+      const h = sm.size * 0.74;
+      this.roundRect(sm.x - sm.size / 2, sm.y - h / 2, sm.size, h, h * 0.42);
+      ctx.fill();
+      // A couple of streaks so it reads as smeared, not painted.
+      ctx.globalAlpha = life * 0.5;
+      ctx.strokeStyle = '#5c3512';
+      ctx.lineWidth = Math.max(1, sm.size * 0.06);
+      ctx.lineCap = 'round';
+      for (let k = 0; k < 3; k++) {
+        const off = ((sm.seed + k * 37) % 100) / 100 - 0.5;
+        ctx.beginPath();
+        ctx.moveTo(sm.x - sm.size * 0.42, sm.y + off * h * 0.7);
+        ctx.lineTo(sm.x + sm.size * 0.42, sm.y + off * h * 0.5);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
   private drawScoots(): void {
     const ctx = this.ctx;
     const img = this.getScootSprite();
@@ -1925,29 +2063,15 @@ export class GameRenderer {
 
     for (const sc of this.scoots) {
       const life = Math.max(0, Math.min(1, sc.life));
-      const t = 1 - life;
+      const raw = 1 - life;
+      const t = shuffleEase(raw);
       const x = sc.fromX + (sc.toX - sc.fromX) * t;
       const y = sc.fromY + (sc.toY - sc.fromY) * t;
 
-      // Scorch trail from the start of the run to where he is now.
-      ctx.save();
-      ctx.globalAlpha = life * 0.9;
-      const grad = sc.vertical
-        ? ctx.createLinearGradient(0, sc.fromY, 0, y)
-        : ctx.createLinearGradient(sc.fromX, 0, x, 0);
-      grad.addColorStop(0, 'rgba(255,255,255,0)');
-      grad.addColorStop(1, sc.color);
-      ctx.fillStyle = grad;
-      const thickness = this.cell * 0.72;
-      if (sc.vertical) {
-        ctx.fillRect(x - thickness / 2, sc.fromY, thickness, y - sc.fromY);
-      } else {
-        ctx.fillRect(sc.fromX, y - thickness / 2, x - sc.fromX, thickness);
-      }
-      ctx.restore();
-
-      // Wobble, because he is putting his back into it.
-      const wobble = Math.sin(t * Math.PI * 9) * this.cell * 0.06;
+      // He rocks as he shoves, and sits still between shoves.
+      const seg = 1 / SCOOT_SHOVES;
+      const within = Math.min(1, ((raw % seg) / seg) / SHOVE_PUSH);
+      const wobble = Math.sin(within * Math.PI * 2) * this.cell * 0.07;
 
       ctx.save();
       ctx.translate(x, y);
@@ -1977,6 +2101,17 @@ export class GameRenderer {
 
   private drawParticles(): void {
     const ctx = this.ctx;
+    // Clipped to the tray: dust used to spill down the screen below the board.
+    ctx.save();
+    const inset = this.cell * 0.2;
+    this.roundRect(
+      this.originX - inset,
+      this.originY - inset,
+      this.cell * this.board.width + inset * 2,
+      this.cell * this.board.height + inset * 2,
+      this.cell * 0.45,
+    );
+    ctx.clip();
     for (const p of this.particles) {
       const life = Math.max(0, p.life);
       ctx.save();
