@@ -54,6 +54,40 @@ import {
   totalStars,
 } from '../game/save.js';
 
+/**
+ * Where the game actually lives, for sharing. The share link must work for
+ * the person receiving it, so it cannot simply be the address this tab
+ * happens to be open on: a LAN address or localhost is unreachable for
+ * everyone else and fails with "Safari cannot open the page".
+ */
+const PUBLIC_URL = 'https://kaleochow-sketch.github.io/gem-quest/';
+
+/** Loopback, private-range and .local hosts are not shareable. */
+function isPrivateHost(host: string): boolean {
+  return (
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '::1' ||
+    host === '[::1]' ||
+    host === '' ||
+    host.endsWith('.local') ||
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+  );
+}
+
+/**
+ * The canonical link to hand out. A real public deployment shares itself, so
+ * moving the game keeps sharing correct; anything local falls back to the
+ * published copy.
+ */
+export function shareUrl(): string {
+  if (location.protocol === 'file:' || isPrivateHost(location.hostname)) return PUBLIC_URL;
+  const path = location.pathname.replace(/index\.html$/, '');
+  return location.origin + (path.endsWith('/') ? path : path + '/');
+}
+
 type ScreenId = 'map' | 'shop' | 'game';
 type ShopTab = 'boosters' | 'powerups' | 'upgrades' | 'dev';
 
@@ -251,11 +285,14 @@ export class App {
 
   /** The share sheet: a link, a QR code, and the native share sheet. */
   private showShare(): void {
-    const url = location.href.split('#')[0].split('?')[0];
+    const url = shareUrl();
     this.openModal(`
       <h2>Share Gem Quest</h2>
       <p class="lead">Anyone can play straight from the link — no account, no install needed.</p>
-      <div class="qr-frame">${qrSvg(url, { light: '#ffffff', dark: '#141a33' })}</div>
+      <button class="qr-frame" id="qr-tap" type="button" title="Copy link">${qrSvg(url, {
+        light: '#ffffff',
+        dark: '#141a33',
+      })}</button>
       <div class="share-url" id="share-url">${url}</div>
       <div class="btn-row">
         <button class="btn" id="share-copy">Copy link</button>
@@ -264,6 +301,17 @@ export class App {
       <div class="btn-row"><button class="btn" data-close>Close</button></div>
     `);
     this.wireClose();
+
+    const copyLink = async () => {
+      try {
+        await navigator.clipboard.writeText(url);
+        this.toast('Link copied');
+      } catch {
+        // Clipboard access can be refused; the link is on screen to read.
+        this.toast('Copy blocked — the link is shown above');
+      }
+    };
+    $('qr-tap').addEventListener('click', copyLink);
 
     $('share-copy').addEventListener('click', async () => {
       try {

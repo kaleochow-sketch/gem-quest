@@ -576,7 +576,7 @@ body::after {
 
 /* ---------------- share sheet ---------------- */
 
-.qr-frame {
+button.qr-frame, .qr-frame {
   width: 190px;
   margin: 4px auto 12px;
   padding: 10px;

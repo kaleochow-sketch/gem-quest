@@ -130,6 +130,12 @@ The engine is pure logic and returns an animation timeline (`Step[]`) that the
 renderer replays; it has no DOM dependency, which is what lets the simulator play
 thousands of levels headlessly.
 
+The share sheet hands out a canonical public link, not the address the tab is
+open on. Sharing a LAN or localhost address produces a QR that only resolves on
+the developer's own machine, which fails for the recipient with "Safari cannot
+open the page". A genuine public deployment shares itself, so moving the game
+keeps sharing correct.
+
 ## Dev tools
 
 Tap the ◆ beside the title **seven times** to reveal a 🛠 Dev tab in the shop.
