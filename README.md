@@ -194,6 +194,14 @@ level rather than dumped up front. Seen cards are remembered per profile; the
 
 ## Publishing
 
+Every build stamps a content hash onto `styles.css` and `bundle.js` and into
+the service-worker cache name, so a deploy invalidates both the browser cache
+and the installed app's cache. Navigations are network-first (a deploy is picked
+up on the next launch, with the cache as the offline fallback); the hashed
+assets are cache-first, which is always safe because their URL changes when
+they do.
+
+
 `npm run deploy` builds a minified, self-contained copy into `docs/`, which
 GitHub Pages serves as-is. There is no server component and no analytics; all
 progress stays in the player's own browser.

@@ -1,4 +1,5 @@
 import * as esbuild from 'esbuild';
+import { stampBuild } from './stamp.mjs';
 import { cp, mkdir, rm } from 'node:fs/promises';
 
 await rm('dist', { recursive: true, force: true });
@@ -15,4 +16,5 @@ await esbuild.build({
 });
 
 await cp('public', 'dist', { recursive: true });
+await stampBuild('dist');
 console.log('built -> dist/');

@@ -1,5 +1,6 @@
 /** Builds the game into docs/, which GitHub Pages serves directly. */
 import * as esbuild from 'esbuild';
+import { stampBuild } from './stamp.mjs';
 import { cp, mkdir, rm, writeFile } from 'node:fs/promises';
 
 await rm('docs', { recursive: true, force: true });
@@ -16,6 +17,7 @@ await esbuild.build({
 });
 
 await cp('public', 'docs', { recursive: true });
+await stampBuild('docs');
 // Stops Pages running the files through Jekyll.
 await writeFile('docs/.nojekyll', '');
 console.log('built -> docs/ (GitHub Pages)');

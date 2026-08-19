@@ -41,6 +41,22 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
   if (new URL(request.url).origin !== self.location.origin) return;
 
+  // Navigations go to the network first so a deploy is picked up on the very
+  // next launch, falling back to cache when offline. Assets are content
+  // hashed, so cache-first is always safe for them.
+  if (request.mode === 'navigate') {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          const copy = response.clone();
+          caches.open(VERSION).then((cache) => cache.put(request, copy));
+          return response;
+        })
+        .catch(() => caches.match(request).then((hit) => hit || caches.match('index.html'))),
+    );
+    return;
+  }
+
   event.respondWith(
     caches.match(request).then((hit) => {
       // Serve immediately from cache, then refresh it for next time.

@@ -4,12 +4,12 @@
  * connection at all; updates are fetched in the background and applied on
  * the next launch.
  */
-const VERSION = 'gem-quest-v3';
+const VERSION = 'gem-quest-4dd414ab3f';
 const ASSETS = [
   './',
   'index.html',
-  'styles.css',
-  'bundle.js',
+  'styles.css?v=4dd414ab3f',
+  'bundle.js?v=4dd414ab3f',
   'manifest.webmanifest',
   'icon.svg',
   'icon-180.png',
@@ -40,6 +40,22 @@ self.addEventListener('fetch', (event) => {
   const request = event.request;
   if (request.method !== 'GET') return;
   if (new URL(request.url).origin !== self.location.origin) return;
+
+  // Navigations go to the network first so a deploy is picked up on the very
+  // next launch, falling back to cache when offline. Assets are content
+  // hashed, so cache-first is always safe for them.
+  if (request.mode === 'navigate') {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          const copy = response.clone();
+          caches.open(VERSION).then((cache) => cache.put(request, copy));
+          return response;
+        })
+        .catch(() => caches.match(request).then((hit) => hit || caches.match('index.html'))),
+    );
+    return;
+  }
 
   event.respondWith(
     caches.match(request).then((hit) => {
