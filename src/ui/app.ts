@@ -89,6 +89,9 @@ export function shareUrl(): string {
   return location.origin + (path.endsWith('/') ? path : path + '/');
 }
 
+/** Replaced with the content hash at build time; 'dev' when unstamped. */
+export const BUILD_ID = '__BUILD__';
+
 type ScreenId = 'map' | 'shop' | 'game';
 type ShopTab = 'boosters' | 'powerups' | 'upgrades' | 'dev';
 
@@ -673,8 +676,8 @@ export class App {
   private renderDevPanel(body: HTMLElement): void {
     body.appendChild(
       this.blurbLine(
-        'Local to this browser only — nothing here is shared or synced. ' +
-          'Tap the ◆ seven times again to hide these.',
+        `Build ${BUILD_ID}. Local to this browser only — nothing here is shared ` +
+          'or synced. Tap the ◆ seven times again to hide these.',
       ),
     );
 

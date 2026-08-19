@@ -13,6 +13,9 @@ export async function stampBuild(outDir) {
   const styles = await readFile(join(outDir, 'styles.css'), 'utf8');
   const hash = createHash('sha1').update(bundle).update(styles).digest('hex').slice(0, 10);
 
+  // Stamp the id into the bundle so a running copy can report its build.
+  await writeFile(join(outDir, 'bundle.js'), bundle.replaceAll('__BUILD__', hash));
+
   const indexPath = join(outDir, 'index.html');
   let index = await readFile(indexPath, 'utf8');
   index = index
