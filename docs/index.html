@@ -19,7 +19,7 @@
     <meta name="apple-mobile-web-app-title" content="Gem Quest" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="application-name" content="Gem Quest" />
-    <link rel="stylesheet" href="styles.css?v=dc273a461a" />
+    <link rel="stylesheet" href="styles.css?v=156ae814ad" />
   </head>
   <body>
     <div id="app">
@@ -45,6 +45,18 @@
             </button>
           </div>
         </header>
+        <!-- Install prompt: in the map's normal flow, so it can never sit
+             over the tab bar or any button. -->
+        <div class="install-bar" id="install-bar">
+          <img src="icon-192.png" alt="" class="install-icon" />
+          <div class="install-copy">
+            <strong>Install Gem Quest</strong>
+            <small id="install-hint">Full screen, works offline</small>
+          </div>
+          <button class="install-go" id="install-go" type="button">Install</button>
+          <button class="install-close" id="install-close" type="button" aria-label="Dismiss">✕</button>
+        </div>
+
         <div class="region-strip" id="region-strip"></div>
         <div class="map-scroll" id="map-scroll"></div>
         <nav class="tabbar">
@@ -90,22 +102,11 @@
         <div class="powerbar" id="powerbar"></div>
       </section>
 
-      <!-- Install prompt -->
-      <div class="install-bar" id="install-bar">
-        <img src="icon-192.png" alt="" class="install-icon" />
-        <div class="install-copy">
-          <strong>Install Gem Quest</strong>
-          <small id="install-hint">Play full screen, and offline</small>
-        </div>
-        <button class="install-go" id="install-go" type="button">Install</button>
-        <button class="install-close" id="install-close" type="button" aria-label="Dismiss">✕</button>
-      </div>
-
       <!-- Modals -->
       <div class="overlay" id="overlay">
         <div class="modal" id="modal"></div>
       </div>
     </div>
-    <script type="module" src="bundle.js?v=dc273a461a"></script>
+    <script type="module" src="bundle.js?v=156ae814ad"></script>
   </body>
 </html>

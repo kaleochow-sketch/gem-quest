@@ -524,28 +524,23 @@ body::after {
 /* ---------------- install banner ---------------- */
 
 .install-bar {
-  position: fixed;
-  left: 50%;
-  /* Clears the bottom chrome: the tab bar on the map and shop, the power
-     bar in a level. Sitting at the very bottom put it straight over the
-     Play button, which is exactly what a new player reaches for. */
-  bottom: calc(14px + var(--safe-bottom) + 92px);
-  transform: translate(-50%, 140%);
-  width: min(520px, calc(100% - 24px));
-  display: flex;
+  /* Sits in the map's flow under the header. It used to float above the
+     bottom edge, where it overlapped the tab bar: taps meant for its ✕
+     landed on the Upgrades button underneath. */
+  display: none;
   align-items: center;
-  gap: 11px;
-  padding: 11px 12px;
-  border-radius: 20px;
+  gap: 10px;
+  margin: 0 14px 8px;
+  padding: 9px 10px 9px 11px;
+  border-radius: 18px;
   border: 1px solid var(--line-2);
   background: linear-gradient(160deg, #322558, #1a1333);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
-  z-index: 25;
-  transition: transform 0.35s cubic-bezier(0.2, 1.1, 0.4, 1);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.4);
 }
-.install-bar[data-open="true"] { transform: translate(-50%, 0); }
-.install-bar[data-hidden="true"] { transform: translate(-50%, 320%); pointer-events: none; }
-.install-icon { width: 42px; height: 42px; border-radius: 11px; }
+.install-bar[data-open="true"] { display: flex; animation: fadeIn 0.25s ease; }
+.install-bar[data-hidden="true"] { display: none; }
+
+.install-icon { width: 40px; height: 40px; border-radius: 11px; flex: 0 0 auto; }
 .install-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .install-copy strong { font-size: 14px; }
 .install-copy small { color: var(--muted); font-size: 11.5px; }
@@ -560,12 +555,22 @@ body::after {
   border-radius: 12px;
 }
 .install-close {
-  background: none;
-  border: none;
-  color: var(--muted);
+  /* A comfortable target: the old 19x23px ✕ was almost impossible to hit
+     on a phone, which read as the button simply not working. */
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--text);
   font-size: 15px;
-  padding: 4px 2px;
+  padding: 0;
 }
+.install-close:active { transform: scale(0.94); }
 
 .icon-btn-sm { width: 32px; height: 32px; font-size: 15px; border-radius: 11px; }
 
