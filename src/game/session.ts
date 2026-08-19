@@ -101,7 +101,11 @@ export class LevelSession {
     if (kind === 'hammer' && a) steps = this.board.strike(a, this.context);
     else if (kind === 'shuffle') {
       steps = [this.board.shuffle(this.context.minMoves ?? 1), ...this.board.resolve(this.context, null, [])];
-    } else if (kind === 'freeswap' && a && b) steps = this.board.swapForced(a, b, this.context);
+    } else if (kind === 'freeswap' && a && b) {
+      steps = this.board.swapForced(a, b, this.context);
+    } else if (kind === 'lightning' && a) {
+      steps = this.board.lightning(a, this.context);
+    }
 
     if (steps.length) {
       this.ingest(steps);

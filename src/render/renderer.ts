@@ -1360,6 +1360,7 @@ export class GameRenderer {
     this.drawWells();
     this.drawBeams();
     this.drawSprites();
+    this.drawJelly();
     this.drawOverlays();
     // Drawn after the pieces so the dog passes in front of them.
     this.drawScoots();
@@ -1434,32 +1435,9 @@ export class GameRenderer {
 
         const jelly = this.jelly[i];
         if (jelly > 0) {
-          const pulse = 0.85 + Math.sin(this.time * 2 + (r + c) * 0.6) * 0.15;
-          const grad = ctx.createLinearGradient(x, y, x + this.cell, y + this.cell);
-          const strength = jelly >= 3 ? 0.72 : jelly >= 2 ? 0.5 : 0.26;
-          grad.addColorStop(0, `rgba(140, 226, 255, ${strength * pulse})`);
-          grad.addColorStop(1, `rgba(76, 150, 255, ${strength * 0.9 * pulse})`);
-          ctx.fillStyle = grad;
+          ctx.fillStyle = `rgba(120, 214, 255, ${0.1 + jelly * 0.06})`;
           this.roundRect(x + 2.5, y + 2.5, this.cell - 5, this.cell - 5, this.cell * 0.22);
           ctx.fill();
-          ctx.strokeStyle = `rgba(214,246,255,${jelly >= 3 ? 0.95 : jelly >= 2 ? 0.8 : 0.4})`;
-          ctx.lineWidth = jelly >= 3 ? 3 : jelly >= 2 ? 2 : 1;
-          ctx.stroke();
-          // Layer pips so the remaining count is readable at a glance.
-          if (jelly >= 2) {
-            ctx.fillStyle = 'rgba(255,255,255,0.9)';
-            for (let k = 0; k < jelly; k++) {
-              ctx.beginPath();
-              ctx.arc(
-                x + this.cell / 2 + (k - (jelly - 1) / 2) * this.cell * 0.16,
-                y + this.cell - this.cell * 0.15,
-                this.cell * 0.038,
-                0,
-                Math.PI * 2,
-              );
-              ctx.fill();
-            }
-          }
         }
 
         const blocker = this.blockers[i];
@@ -1630,6 +1608,78 @@ export class GameRenderer {
         ctx.arc(cx, cy, this.cell * 0.34 * sprite.scale, 0, Math.PI * 2);
         ctx.stroke();
         ctx.restore();
+      }
+    }
+  }
+
+  /**
+   * Jelly, drawn over the pieces as a pane of tinted glass. The pieces are
+   * opaque and fill their cell, so anything drawn underneath them is simply
+   * not visible — this is the layer the player actually reads.
+   */
+  private drawJelly(): void {
+    const ctx = this.ctx;
+    for (let r = 0; r < this.board.height; r++) {
+      for (let c = 0; c < this.board.width; c++) {
+        const layers = this.jelly[r * this.board.width + c];
+        if (!layers) continue;
+        const x = this.originX + c * this.cell;
+        const y = this.originY + r * this.cell;
+        const shimmer = 0.85 + Math.sin(this.time * 2.2 + (r + c) * 0.7) * 0.15;
+        const alpha = (layers >= 3 ? 0.46 : layers >= 2 ? 0.34 : 0.22) * shimmer;
+
+        ctx.save();
+        this.roundRect(x + 1.5, y + 1.5, this.cell - 3, this.cell - 3, this.cell * 0.24);
+        ctx.clip();
+
+        const pane = ctx.createLinearGradient(x, y, x + this.cell, y + this.cell);
+        pane.addColorStop(0, `rgba(150, 232, 255, ${alpha})`);
+        pane.addColorStop(1, `rgba(60, 140, 255, ${alpha})`);
+        ctx.fillStyle = pane;
+        ctx.fillRect(x, y, this.cell, this.cell);
+
+        // Diagonal glass streak.
+        ctx.globalAlpha = 0.4 * shimmer;
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        ctx.beginPath();
+        ctx.moveTo(x - this.cell * 0.1, y + this.cell * 0.72);
+        ctx.lineTo(x + this.cell * 0.5, y - this.cell * 0.1);
+        ctx.lineTo(x + this.cell * 0.72, y - this.cell * 0.1);
+        ctx.lineTo(x + this.cell * 0.12, y + this.cell * 0.72);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+
+        // Bright rim so the edge of the jelly is unmistakable.
+        ctx.save();
+        ctx.strokeStyle = `rgba(196, 246, 255, ${0.55 + layers * 0.15})`;
+        ctx.lineWidth = Math.max(1.5, this.cell * (layers >= 2 ? 0.07 : 0.045));
+        ctx.shadowColor = 'rgba(120, 220, 255, 0.9)';
+        ctx.shadowBlur = this.cell * 0.18;
+        this.roundRect(x + 2.5, y + 2.5, this.cell - 5, this.cell - 5, this.cell * 0.22);
+        ctx.stroke();
+        ctx.restore();
+
+        // Layer pips.
+        if (layers >= 2) {
+          ctx.save();
+          ctx.fillStyle = 'rgba(255,255,255,0.95)';
+          ctx.strokeStyle = 'rgba(20,60,90,0.6)';
+          ctx.lineWidth = Math.max(0.8, this.cell * 0.018);
+          for (let k = 0; k < layers; k++) {
+            ctx.beginPath();
+            ctx.arc(
+              x + this.cell / 2 + (k - (layers - 1) / 2) * this.cell * 0.17,
+              y + this.cell - this.cell * 0.14,
+              this.cell * 0.05,
+              0,
+              Math.PI * 2,
+            );
+            ctx.fill();
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
       }
     }
   }

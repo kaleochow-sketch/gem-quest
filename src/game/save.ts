@@ -10,6 +10,8 @@ import {
 } from './upgrades.js';
 
 const STORAGE_KEY = 'gem-quest/profile/v1';
+/** Bumped when a saved profile needs migrating. */
+const PROFILE_VERSION = 2;
 
 export interface LevelRecord {
   stars: number;
@@ -17,7 +19,7 @@ export interface LevelRecord {
 }
 
 export interface Profile {
-  version: 1;
+  version: number;
   coins: number;
   /** Highest level the player may enter. */
   unlocked: number;
@@ -38,12 +40,12 @@ export interface Profile {
 
 function defaultProfile(): Profile {
   return {
-    version: 1,
+    version: PROFILE_VERSION,
     coins: 500,
     unlocked: 1,
     levels: {},
     upgrades: emptyRanks(),
-    inventory: { hammer: 1, shuffle: 1, freeswap: 1, lightning: 0 },
+    inventory: { hammer: 1, shuffle: 1, freeswap: 1, lightning: 1 },
     lives: 5,
     livesUpdatedAt: Date.now(),
     soundOn: true,
@@ -66,8 +68,12 @@ export function loadProfile(): Profile {
       upgrades: { ...base.upgrades, ...(parsed.upgrades ?? {}) },
       inventory: { ...base.inventory, ...(parsed.inventory ?? {}) },
       levels: parsed.levels ?? {},
-      version: 1,
+      version: PROFILE_VERSION,
     };
+    // v2 introduced Lightning; make sure existing saves get one to try.
+    if ((parsed.version ?? 1) < 2) {
+      profile.inventory.lightning = Math.max(1, profile.inventory.lightning ?? 0);
+    }
     return refillLives(profile);
   } catch {
     return defaultProfile();
