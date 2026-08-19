@@ -153,6 +153,45 @@ gemQuest.dev.goto(750)     // jump straight to a level
 gemQuest.dev.win()         // clear the level in progress
 ```
 
+## Installing it as an app
+
+Gem Quest is a PWA, so it installs to a phone home screen from the link with no
+store involved:
+
+- **iPhone** — open the link in Safari, tap Share, then *Add to Home Screen*.
+  iOS fires no install event, so the game shows these steps itself.
+- **Android / desktop Chrome** — an install banner appears; one tap and it is on
+  the home screen.
+
+Installed, it runs full screen with its own icon and **works with no
+connection** — the service worker precaches the whole app (one HTML file, one
+bundle, one stylesheet and the icons) and serves cache-first, refreshing in the
+background for next launch.
+
+Icons are generated from `public/icon.svg` with `sips`:
+
+```bash
+for size in 180 192 512; do sips -s format png -Z $size public/icon.svg --out public/icon-$size.png; done
+```
+
+`icon-maskable-512.png` insets the same art into the safe zone so Android's
+circle crop cannot clip the dog's ears.
+
+### Sharing
+
+The ↗ button opens a sheet with the link, the system share sheet, and a QR
+code. The QR encoder in `src/ui/qr.ts` is written from scratch — byte mode,
+error-correction level M, versions 1-10 — because an offline app cannot pull a
+library from a CDN at runtime. It is verified by decoding its own output back
+with `BarcodeDetector`, not by eyeballing it.
+
+### Onboarding
+
+Short cards introduce each mechanic the first time it can appear — matching,
+the dog sweep, jelly, crates, chains, star fruit, fuses — shown before that
+level rather than dumped up front. Seen cards are remembered per profile; the
+**?** button replays them.
+
 ## Publishing
 
 `npm run deploy` builds a minified, self-contained copy into `docs/`, which
