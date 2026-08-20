@@ -1,3 +1,4 @@
+import { LEADERBOARD_URL, hasLeaderboard } from './config.js';
 import { Profile } from './save.js';
 
 /**
@@ -127,4 +128,63 @@ export function addChallenge(profile: Profile, challenge: Challenge): void {
   }
   // Keep the list bounded; it lives in local storage.
   profile.challenges = profile.challenges.slice(-40);
+}
+
+
+/* ------------------------------------------------------------------ *
+ * Global board
+ * ------------------------------------------------------------------ */
+
+export interface GlobalEntry {
+  name: string;
+  score: number;
+  stars: number;
+  level: number;
+  player: string;
+}
+
+/** A stable anonymous id, so one player holds one row on the board. */
+export function playerId(profile: Profile): string {
+  if (!profile.playerId) {
+    profile.playerId =
+      'p_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+  }
+  return profile.playerId;
+}
+
+/** Top entries for a level, or level 0 for the all-levels board. */
+export async function fetchTop(level: number, signal?: AbortSignal): Promise<GlobalEntry[]> {
+  if (!hasLeaderboard()) return [];
+  const res = await fetch(`${LEADERBOARD_URL}/top?level=${level}`, { signal });
+  if (!res.ok) throw new Error(`leaderboard ${res.status}`);
+  const data = (await res.json()) as { entries?: GlobalEntry[] };
+  return data.entries ?? [];
+}
+
+/** Sends a result. Failure is never fatal — the game is playable offline. */
+export async function submitScore(
+  profile: Profile,
+  level: number,
+  score: number,
+  stars: number,
+): Promise<{ rank: number; entries: GlobalEntry[] } | null> {
+  if (!hasLeaderboard() || score <= 0) return null;
+  try {
+    const res = await fetch(`${LEADERBOARD_URL}/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: cleanName(profile.playerName || 'Player'),
+        player: playerId(profile),
+        level,
+        score: Math.round(score),
+        stars,
+      }),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { rank?: number; entries?: GlobalEntry[] };
+    return { rank: data.rank ?? 0, entries: data.entries ?? [] };
+  } catch {
+    return null;
+  }
 }

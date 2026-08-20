@@ -31,10 +31,16 @@ export interface Profile {
   livesUpdatedAt: number;
   soundOn: boolean;
   musicOn: boolean;
+  /** Drop decorative effects for speed. */
+  lowFx?: boolean;
   /** Shown on challenge links you send. */
   playerName?: string;
+  /** Stable anonymous id used to hold one row on the global board. */
+  playerId?: string;
   /** Results other players have sent you. */
   challenges?: import('./leaderboard.js').Challenge[];
+  /** Permanent entitlements bought with real money. */
+  purchases?: string[];
   /** Tutorial cards already shown. */
   seen?: string[];
   /** The install banner was dismissed. */
@@ -59,8 +65,10 @@ function defaultProfile(): Profile {
     livesUpdatedAt: Date.now(),
     soundOn: true,
     musicOn: true,
+    lowFx: false,
     playerName: '',
     challenges: [],
+    purchases: [],
     seen: [],
     installDismissed: false,
     dev: false,
@@ -83,6 +91,7 @@ export function loadProfile(): Profile {
       inventory: { ...base.inventory, ...(parsed.inventory ?? {}) },
       levels: parsed.levels ?? {},
       challenges: parsed.challenges ?? [],
+      purchases: parsed.purchases ?? [],
       seen: parsed.seen ?? [],
       version: PROFILE_VERSION,
     };
@@ -115,8 +124,13 @@ export function resetProfile(): Profile {
  * ------------------------------------------------------------------ */
 
 /** Credits any lives earned since the last tick. */
+/** Upgrade cap plus any purchased entitlement. */
+function livesCap(profile: Profile): number {
+  return maxLives(profile.upgrades) + ((profile.purchases ?? []).includes('nine_lives') ? 5 : 0);
+}
+
 export function refillLives(profile: Profile, now = Date.now()): Profile {
-  const cap = maxLives(profile.upgrades);
+  const cap = livesCap(profile);
   if (profile.lives >= cap) {
     profile.lives = Math.min(profile.lives, cap);
     profile.livesUpdatedAt = now;
@@ -134,7 +148,7 @@ export function refillLives(profile: Profile, now = Date.now()): Profile {
 
 /** Milliseconds until the next life, or 0 when full. */
 export function msToNextLife(profile: Profile, now = Date.now()): number {
-  if (profile.lives >= maxLives(profile.upgrades)) return 0;
+  if (profile.lives >= livesCap(profile)) return 0;
   return Math.max(0, profile.livesUpdatedAt + lifeRefillMs(profile.upgrades) - now);
 }
 
@@ -142,7 +156,7 @@ export function spendLife(profile: Profile): boolean {
   refillLives(profile);
   if (profile.infiniteLives) return true;
   if (profile.lives <= 0) return false;
-  if (profile.lives >= maxLives(profile.upgrades)) profile.livesUpdatedAt = Date.now();
+  if (profile.lives >= livesCap(profile)) profile.livesUpdatedAt = Date.now();
   profile.lives--;
   return true;
 }

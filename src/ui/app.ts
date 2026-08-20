@@ -17,19 +17,34 @@ import {
   isRegionFinale,
   regionOf,
 } from '../game/levels.js';
+import { hasLeaderboard, hasPayments } from '../game/config.js';
 import {
   Challenge,
+  GlobalEntry,
   addChallenge,
   bestOn,
   cleanName,
   decodeChallenge,
   encodeChallenge,
   levelsCleared,
+  fetchTop,
   personalBest,
   sortChallenges,
+  submitScore,
   totalScore,
 } from '../game/leaderboard.js';
 import { LevelSession } from '../game/session.js';
+import {
+  STORE,
+  Sku,
+  grant,
+  owns,
+  purchasedCoinMultiplier,
+  purchasedExtraLives,
+  purchasedExtraMoves,
+  redeem,
+  startCheckout,
+} from '../game/store.js';
 import {
   BOOSTERS,
   BoosterId,
@@ -105,7 +120,7 @@ export function shareUrl(): string {
 export const BUILD_ID = '__BUILD__';
 
 type ScreenId = 'map' | 'shop' | 'game' | 'ranks';
-type ShopTab = 'boosters' | 'powerups' | 'upgrades' | 'dev';
+type ShopTab = 'boosters' | 'powerups' | 'upgrades' | 'store' | 'dev';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -159,6 +174,10 @@ export class App {
     this.levelId = Math.min(this.profile.unlocked, TOTAL_LEVELS);
     this.mapRegion = regionOf(this.levelId);
 
+    if (this.profile.lowFx) {
+      document.body.classList.add('low-fx');
+      this.renderer.lowFx = true;
+    }
     audio.setSfx(this.profile.soundOn !== false);
     audio.setMusic(this.profile.musicOn !== false);
     audio.setRegion(regionOf(this.levelId));
@@ -169,6 +188,7 @@ export class App {
     this.bindChrome();
     this.bindBoardInput();
     this.takeChallengeFromUrl();
+    void this.settlePurchase();
     this.bindInstall();
     this.renderMap();
     this.refreshWallet();
@@ -370,6 +390,7 @@ export class App {
     for (const id of ['map', 'shop', 'game', 'ranks'] as ScreenId[]) {
       $(`screen-${id}`).dataset.active = String(id === screen);
     }
+    document.body.classList.toggle('in-game', screen === 'game');
     if (screen === 'game') this.startLoop();
     else this.stopLoop();
     if (screen === 'map') this.renderMap();
@@ -607,6 +628,23 @@ export class App {
     `;
     body.appendChild(stats);
 
+    if (hasLeaderboard()) {
+      body.appendChild(this.sectionTitle('Global — all levels'));
+      const host = document.createElement('div');
+      host.id = 'global-board';
+      host.appendChild(this.blurbLine('Loading…'));
+      body.appendChild(host);
+      void this.loadGlobal(host);
+    } else {
+      body.appendChild(this.sectionTitle('Global'));
+      body.appendChild(
+        this.blurbLine(
+          'Not connected yet. Deploy the leaderboard service in server/ and set ' +
+            'LEADERBOARD_URL in src/game/config.ts, and worldwide rankings appear here.',
+        ),
+      );
+    }
+
     const challenges = sortChallenges(this.profile);
     if (challenges.length) {
       body.appendChild(this.sectionTitle('Challenges'));
@@ -638,6 +676,36 @@ export class App {
           'with anyone you send them to.',
       ),
     );
+  }
+
+  /** Fills the global section, degrading quietly when the service is down. */
+  private async loadGlobal(host: HTMLElement): Promise<void> {
+    try {
+      const entries = await fetchTop(0);
+      host.innerHTML = '';
+      if (!entries.length) {
+        host.appendChild(this.blurbLine('No scores yet — be the first.'));
+        return;
+      }
+      const me = this.profile.playerId;
+      entries.slice(0, 25).forEach((e: GlobalEntry, i) => {
+        const el = document.createElement('div');
+        el.className = 'rank-row';
+        if (e.player === me) el.dataset.you = 'true';
+        el.innerHTML = `
+          <div class="rank-pos">${i + 1}</div>
+          <div class="rank-main">
+            <div class="rank-title">${this.escape(e.name)}${e.player === me ? ' (you)' : ''}</div>
+            <div class="rank-sub">Level ${e.level} · ${'★'.repeat(e.stars)}</div>
+          </div>
+          <div class="rank-score">${e.score.toLocaleString()}</div>
+        `;
+        host.appendChild(el);
+      });
+    } catch {
+      host.innerHTML = '';
+      host.appendChild(this.blurbLine('Could not reach the leaderboard. Your local scores are unaffected.'));
+    }
   }
 
   private challengeRow(c: Challenge): HTMLElement {
@@ -740,6 +808,7 @@ export class App {
       { id: 'powerups', label: 'Power-ups' },
       { id: 'upgrades', label: 'Upgrades' },
     ];
+    if (hasPayments()) tabDefs.push({ id: 'store', label: '💎 Store' });
     if (this.profile.dev) tabDefs.push({ id: 'dev', label: '🛠 Dev' });
     for (const tab of tabDefs) {
       const btn = document.createElement('button');
@@ -757,6 +826,10 @@ export class App {
     const body = $('shop-body');
     body.innerHTML = '';
 
+    if (this.shopTab === 'store') {
+      this.renderStore(body);
+      return;
+    }
     if (this.shopTab === 'dev') {
       this.renderDevPanel(body);
       return;
@@ -785,6 +858,12 @@ export class App {
       { label: 'Sound effects', sub: 'Matches, blasts and the dog.', icon: '🔊', key: 'soundOn' },
       { label: 'Music', sub: 'A backing track that changes key each region.', icon: '🎵', key: 'musicOn' },
     ];
+    const fxToggle: { label: string; sub: string; icon: string; key: 'lowFx' } = {
+      label: 'Reduce effects',
+      sub: 'Fewer particles and no background animation. Turn on if the board feels slow.',
+      icon: '🪫',
+      key: 'lowFx',
+    };
     for (const t of audioToggles) {
       const card = document.createElement('div');
       card.className = 'card';
@@ -804,6 +883,30 @@ export class App {
         audio.unlock();
         if (t.key === 'soundOn') audio.setSfx(next);
         else audio.setMusic(next);
+        this.renderShop();
+      });
+      card.appendChild(btn);
+      body.appendChild(card);
+    }
+
+    {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.innerHTML = `<div class="card-icon">${fxToggle.icon}</div>
+        <div class="card-body"><div class="card-title">${fxToggle.label}</div>
+        <div class="card-sub">${fxToggle.sub}</div></div>`;
+      const btn = document.createElement('button');
+      btn.className = 'buy-btn';
+      btn.type = 'button';
+      const on = !!this.profile.lowFx;
+      btn.textContent = on ? 'ON' : 'OFF';
+      btn.style.opacity = on ? '1' : '0.6';
+      btn.addEventListener('click', () => {
+        const next = !this.profile.lowFx;
+        this.profile.lowFx = next;
+        saveProfile(this.profile);
+        this.renderer.lowFx = next;
+        document.body.classList.toggle('low-fx', next);
         this.renderShop();
       });
       card.appendChild(btn);
@@ -1123,6 +1226,89 @@ export class App {
     if (this.screen === 'shop') this.renderShop();
   }
 
+  /** Real-money items. Hidden entirely unless a payments service is configured. */
+  private renderStore(body: HTMLElement): void {
+    body.appendChild(
+      this.blurbLine(
+        'Paid with a card through Stripe. Card details never reach this game. ' +
+          'Purchases are tied to this device, since there are no accounts.',
+      ),
+    );
+
+    for (const item of STORE) {
+      const held = item.permanent && owns(this.profile, item.sku);
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.innerHTML = `
+        <div class="card-icon">${item.icon}</div>
+        <div class="card-body">
+          <div class="card-title">${item.name}${held ? ' <span class="owned">owned</span>' : ''}</div>
+          <div class="card-sub">${item.blurb}</div>
+        </div>
+      `;
+      const btn = document.createElement('button');
+      btn.className = 'buy-btn';
+      btn.type = 'button';
+      btn.textContent = held ? 'Owned' : item.price;
+      btn.disabled = held;
+      btn.addEventListener('click', () => void this.buy(item.sku, btn));
+      card.appendChild(btn);
+      body.appendChild(card);
+    }
+
+    body.appendChild(
+      this.blurbLine(
+        'Payments are handled by Stripe. Refunds and receipts come from them; ' +
+          'clearing this browser\'s data will lose device-bound purchases.',
+      ),
+    );
+  }
+
+  private async buy(sku: Sku, btn: HTMLButtonElement): Promise<void> {
+    btn.disabled = true;
+    btn.textContent = 'Opening…';
+    try {
+      const url = await startCheckout(this.profile, sku);
+      if (!url) {
+        this.toast('Could not start checkout');
+        this.renderShop();
+        return;
+      }
+      location.href = url;
+    } catch {
+      this.toast('Could not reach the payment service');
+      this.renderShop();
+    }
+  }
+
+  /** Stripe returns here; nothing is granted until the server confirms payment. */
+  private async settlePurchase(): Promise<void> {
+    const params = new URLSearchParams(location.search);
+    const session = params.get('purchase');
+    if (!session) return;
+    history.replaceState(null, '', location.pathname);
+    if (session === 'cancelled') {
+      this.toast('Purchase cancelled');
+      return;
+    }
+    const sku = await redeem(session);
+    if (!sku) {
+      this.toast('Could not confirm that payment');
+      return;
+    }
+    const message = grant(this.profile, sku);
+    saveProfile(this.profile);
+    this.refreshWallet();
+    audio.sfx('coin');
+    this.openModal(`
+      <div class="modal-tag">Purchase complete</div>
+      <h2>Thank you</h2>
+      <p class="lead">${message}.</p>
+      <div class="btn-row"><button class="btn btn-primary" data-close>Play</button></div>
+    `);
+    this.wireClose();
+  }
+
   private blurbLine(text: string): HTMLElement {
     const el = document.createElement('p');
     el.className = 'panel-blurb';
@@ -1193,7 +1379,7 @@ export class App {
   }
 
   private showLivesInfo(): void {
-    const cap = maxLives(this.profile.upgrades);
+    const cap = maxLives(this.profile.upgrades) + purchasedExtraLives(this.profile);
     const ms = msToNextLife(this.profile);
     const mins = Math.ceil(ms / 60000);
     this.openModal(`
@@ -1512,7 +1698,10 @@ export class App {
 
     const def = getLevel(this.levelId);
     this.session = new LevelSession(def, {
-      extraMoves: extraMovesFrom(this.profile.upgrades) + boosterExtraMoves(this.chosenBoosters),
+      extraMoves:
+        extraMovesFrom(this.profile.upgrades) +
+        boosterExtraMoves(this.chosenBoosters) +
+        purchasedExtraMoves(this.profile),
       startingSpecials: [
         ...boosterSpecials(this.chosenBoosters),
         ...starlightSpecials(this.profile.upgrades),
@@ -1810,9 +1999,17 @@ export class App {
       audio.sfx('win');
       for (let i = 0; i < stars; i++) window.setTimeout(() => audio.sfx('star', i), 420 + i * 260);
       const { firstClear } = recordResult(this.profile, session.def.id, stars, session.score);
-      const coins = coinReward(stars, session.leftoverMoves, firstClear, this.profile.upgrades, session.def.id);
+      const coins = Math.round(
+        coinReward(stars, session.leftoverMoves, firstClear, this.profile.upgrades, session.def.id) *
+          purchasedCoinMultiplier(this.profile),
+      );
       this.profile.coins += coins;
       saveProfile(this.profile);
+
+      // Fire and forget: a slow or missing backend must never hold up play.
+      void submitScore(this.profile, session.def.id, session.score, stars).then((result) => {
+        if (result && result.rank > 0) this.toast(`Global rank #${result.rank} on level ${session.def.id}`);
+      });
 
       const nextId = Math.min(session.def.id + 1, TOTAL_LEVELS);
       this.openModal(`

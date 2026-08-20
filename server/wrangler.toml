@@ -1,0 +1,9 @@
+name = "gem-quest-leaderboard"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+# Create with:  npx wrangler kv namespace create SCORES
+# then paste the id below.
+[[kv_namespaces]]
+binding = "SCORES"
+id = "PUT_YOUR_KV_NAMESPACE_ID_HERE"

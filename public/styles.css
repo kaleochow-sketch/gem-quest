@@ -43,6 +43,7 @@ body::before {
     linear-gradient(180deg, var(--bg-2) 0%, var(--bg) 60%, #08060f 100%);
   animation: drift 26s ease-in-out infinite alternate;
   transition: background 0.8s ease;
+  will-change: transform;
 }
 body::after {
   content: "";
@@ -657,6 +658,10 @@ button.qr-frame, .qr-frame {
 .rank-score { font-variant-numeric: tabular-nums; font-weight: 800; font-size: 14px; }
 .rank-stars { color: var(--gold); font-size: 11px; letter-spacing: 1px; }
 
+.rank-row[data-you="true"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(168,105,255,0.25);
+}
 .rank-row[data-beaten="true"] { border-color: rgba(61,220,132,0.5); }
 .rank-row[data-beaten="false"] { border-color: rgba(255,150,70,0.45); }
 
@@ -681,3 +686,20 @@ button.qr-frame, .qr-frame {
   font: inherit; font-weight: 700; font-size: 14px;
 }
 .name-row input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+
+/* ---------------- in-play performance ---------------- */
+
+/* While a level is open the ambient background is almost entirely hidden by
+   the board, so animating a full-screen layer behind it is pure cost. */
+body.in-game::before { animation: none; will-change: auto; }
+body.in-game::after { display: none; }
+
+/* Reduced-effects mode drops the expensive decoration but keeps the game
+   completely playable. */
+body.low-fx::before { animation: none; background: linear-gradient(180deg, var(--bg-2), var(--bg) 60%, #08060f); }
+body.low-fx::after { display: none; }
+body.low-fx .tabbar { backdrop-filter: none; }
+body.low-fx .overlay { backdrop-filter: none; }
+body.low-fx .node[data-state="current"] { animation: none; }
+body.low-fx .brand-mark { animation: none; }

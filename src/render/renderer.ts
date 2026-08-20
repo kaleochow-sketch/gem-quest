@@ -205,6 +205,15 @@ export class GameRenderer {
   /** Draws a frame-rate readout, switched on with the dev tools. */
   showFps = false;
   private frameMs = 16.7;
+  /**
+   * Drops decoration when frames get expensive. Set from the settings toggle,
+   * and turned on automatically if the device cannot keep up.
+   */
+  lowFx = false;
+  private autoLowFx = false;
+  private slowFrames = 0;
+  /** Particles are the one thing that can grow without bound. */
+  private maxParticles = 220;
 
   selection: Pos | null = null;
   hint: { a: Pos; b: Pos } | null = null;
@@ -1195,9 +1204,11 @@ export class GameRenderer {
   }
 
   private burst(p: Pos, color: string, count: number, power: number, star: boolean): void {
+    if (this.particles.length > this.maxParticles) return;
+    const n = this.lowFx ? Math.ceil(count / 3) : count;
     const { x, y } = this.centreOf(p);
-    for (let i = 0; i < count; i++) {
-      const angle = (Math.PI * 2 * i) / count + Math.random() * 0.8;
+    for (let i = 0; i < n; i++) {
+      const angle = (Math.PI * 2 * i) / n + Math.random() * 0.8;
       const speed = (1.4 + Math.random() * 3.2) * power;
       this.particles.push({
         x,
@@ -1427,6 +1438,18 @@ export class GameRenderer {
     // Smoothed, so the number is readable rather than flickering.
     this.frameMs += (Math.min(200, dt * 1000) - this.frameMs) * 0.1;
 
+    // If the device cannot hold a reasonable rate, shed decoration rather
+    // than let the board itself become unresponsive.
+    if (!this.lowFx) {
+      if (this.frameMs > 26) this.slowFrames++;
+      else this.slowFrames = Math.max(0, this.slowFrames - 1);
+      if (this.slowFrames > 90 && !this.autoLowFx) {
+        this.autoLowFx = true;
+        this.lowFx = true;
+        document.body.classList.add('low-fx');
+      }
+    }
+
     if (!this.active && this.queue.length) this.beginStep(this.queue.shift()!);
 
     if (this.active) {
@@ -1510,7 +1533,7 @@ export class GameRenderer {
     this.shake = Math.max(0, this.shake - dt * 34);
 
     // Occasional glint on an idle gem, so a still board still feels alive.
-    if (!this.busy && this.time > this.nextSparkle && this.sprites.size) {
+    if (!this.lowFx && !this.busy && this.time > this.nextSparkle && this.sprites.size) {
       this.nextSparkle = this.time + 0.5 + Math.random();
       const list = [...this.sprites.values()];
       const sprite = list[Math.floor(Math.random() * list.length)];
@@ -2024,7 +2047,7 @@ export class GameRenderer {
         const layers = this.jelly[r * this.board.width + c];
         if (!layers) continue;
         // A cheap shimmer that does not need the tile repainting.
-        ctx.globalAlpha = 0.85 + Math.sin(this.time * 2.2 + (r + c) * 0.7) * 0.15;
+        ctx.globalAlpha = this.lowFx ? 1 : 0.85 + Math.sin(this.time * 2.2 + (r + c) * 0.7) * 0.15;
         const img = this.jellyImage(Math.min(3, layers));
         ctx.drawImage(
           img,

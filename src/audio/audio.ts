@@ -89,14 +89,14 @@ class AudioEngine {
 
     // A short synthetic room, which stops the blips sounding bone dry.
     this.reverb = ctx.createConvolver();
-    const seconds = 1.6;
+    // Mono and short: convolution cost scales with length and channels, and
+    // this is a decorative tail, not a concert hall.
+    const seconds = 0.7;
     const len = Math.floor(ctx.sampleRate * seconds);
-    const impulse = ctx.createBuffer(2, len, ctx.sampleRate);
-    for (let c = 0; c < 2; c++) {
-      const data = impulse.getChannelData(c);
-      for (let i = 0; i < len; i++) {
-        data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3.2);
-      }
+    const impulse = ctx.createBuffer(1, len, ctx.sampleRate);
+    const data = impulse.getChannelData(0);
+    for (let i = 0; i < len; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3.2);
     }
     this.reverb.buffer = impulse;
     const wet = ctx.createGain();

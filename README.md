@@ -165,8 +165,13 @@ The Leaderboard screen (the ★ chip) shows your cleared count, stars and total,
 your best runs ranked by score, and any challenges you have been sent with
 whether you have beaten them.
 
-A genuinely global leaderboard would need a backend — that is a separate piece
-of work, and a decision about hosting and moderation.
+A global leaderboard needs somewhere to hold everyone's scores. `server/`
+contains a deployable Cloudflare Worker for exactly that, plus a second one that
+puts Stripe Checkout in front of real-money items. Both are optional and both
+are off until configured in `src/game/config.ts` — with neither deployed the
+game plays exactly as before. See `server/README.md`, which also covers what the
+leaderboard can and cannot defend against, and what taking payments commits you
+to.
 
 ## Dev tools
 
