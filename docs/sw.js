@@ -4,12 +4,12 @@
  * connection at all; updates are fetched in the background and applied on
  * the next launch.
  */
-const VERSION = 'gem-quest-af063a9228';
+const VERSION = 'gem-quest-de11062de7';
 const ASSETS = [
   './',
   'index.html',
-  'styles.css?v=af063a9228',
-  'bundle.js?v=af063a9228',
+  'styles.css?v=de11062de7',
+  'bundle.js?v=de11062de7',
   'manifest.webmanifest',
   'icon.svg',
   'icon-180.png',

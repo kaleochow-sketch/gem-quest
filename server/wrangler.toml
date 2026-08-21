@@ -6,4 +6,4 @@ compatibility_date = "2024-11-01"
 # then paste the id below.
 [[kv_namespaces]]
 binding = "SCORES"
-id = "PUT_YOUR_KV_NAMESPACE_ID_HERE"
+id = "3a6cdb4a0f17414ab5476e892c99a6c0"

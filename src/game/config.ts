@@ -8,7 +8,7 @@
  */
 
 /** Base URL of the leaderboard Worker, e.g. https://gem-quest-leaderboard.you.workers.dev */
-export const LEADERBOARD_URL = '';
+export const LEADERBOARD_URL = 'https://gem-quest-leaderboard.kaleo-chow.workers.dev';
 
 /** Base URL of the payments Worker. Leave empty to hide paid items entirely. */
 export const PAYMENTS_URL = '';
