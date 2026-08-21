@@ -59,6 +59,7 @@ function xpFrom(levels) {
 
 async function sendSignInEmail(env, email, link) {
   if (!env.RESEND_API_KEY) return { ok: false, reason: 'email not configured' };
+  let detail = '';
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -73,7 +74,20 @@ async function sendSignInEmail(env, email, link) {
       html: `<p>Tap to sign in to Gem Quest:</p><p><a href="${link}">Sign in</a></p><p style="color:#666;font-size:13px">The link works once and expires in 15 minutes. If you did not ask for it, ignore this email.</p>`,
     }),
   });
-  return { ok: res.ok };
+  if (!res.ok) {
+    // Surface why, rather than telling the player a link is on its way when
+    // it is not. A rejected send is usually a bad key, or the sender domain
+    // not being verified with the provider.
+    try {
+      const body = await res.json();
+      detail = body?.message || body?.error?.message || `HTTP ${res.status}`;
+    } catch {
+      detail = `HTTP ${res.status}`;
+    }
+    console.log('sign-in email failed:', detail);
+    return { ok: false, reason: 'could not send the email', detail };
+  }
+  return { ok: true };
 }
 
 async function sessionUser(env, request) {
@@ -174,7 +188,15 @@ export default {
       await env.SCORES.put(`auth:${token}`, email, { expirationTtl: LINK_TTL_S });
       const link = `${env.SITE_URL}?signin=${token}`;
       const sent = await sendSignInEmail(env, email, link);
-      if (!sent.ok && sent.reason) return json({ error: sent.reason }, 503);
+      if (!sent.ok) {
+        // The token is useless if the mail never left, so do not leave it
+        // sitting in storage.
+        await env.SCORES.delete(`auth:${token}`);
+        return json(
+          { error: sent.reason, detail: sent.detail },
+          sent.reason === 'email not configured' ? 503 : 502,
+        );
+      }
       return json({ ok: true });
     }
 

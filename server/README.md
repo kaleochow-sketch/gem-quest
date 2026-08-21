@@ -51,9 +51,23 @@ Until that key exists, `POST /auth/request` answers `503 email not configured`
 and the game tells the player accounts are not available yet — rather than
 silently failing.
 
-Resend's free tier sends from `onboarding@resend.dev`, which is fine to start.
-Once you own a domain, verify it with them and set `MAIL_FROM` in
-`wrangler.toml` so the mail comes from you.
+**Resend will only send to your own address until you verify a domain.** With
+the default `onboarding@resend.dev` sender, any attempt to email another player
+is rejected:
+
+> You can only send testing emails to your own email address. To send emails to
+> other recipients, please verify a domain at resend.com/domains
+
+So sign-in works for you today, and for nobody else. To open it to players:
+
+1. Verify a domain at <https://resend.com/domains> (a subdomain like
+   `mail.yourdomain.com` is fine; it needs a few DNS records).
+2. Set `MAIL_FROM = "Gem Quest <hello@yourdomain>"` in `wrangler.toml`.
+3. `npx wrangler deploy`.
+
+The Worker reports a failed send as `502` with the provider's reason attached,
+rather than claiming a link is on its way. That matters: without it the game
+tells every player to check an inbox that will never receive anything.
 
 **How sign-in works.** The player types an email; the Worker stores a random
 single-use token for 15 minutes and emails a link. Opening the link exchanges
