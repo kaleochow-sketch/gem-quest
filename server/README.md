@@ -51,6 +51,29 @@ Until that key exists, `POST /auth/request` answers `503 email not configured`
 and the game tells the player accounts are not available yet — rather than
 silently failing.
 
+### Choosing a provider
+
+The Worker supports two, because their requirements differ and the requirement
+is what actually blocks a small project:
+
+| | Needs | Good when |
+|---|---|---|
+| **Brevo** | a verified *sender address* — one link in your inbox | you have no domain |
+| **Resend** | a verified *domain* | you own a domain |
+
+Whichever key is set is used; Brevo takes precedence if both are.
+
+```bash
+# Brevo: no domain required
+cd server
+npx wrangler secret put BREVO_API_KEY
+# then set the verified sender in wrangler.toml:
+#   MAIL_FROM_ADDRESS = "you@youremail.com"
+npx wrangler deploy
+```
+
+### The Resend restriction
+
 **Resend will only send to your own address until you verify a domain.** With
 the default `onboarding@resend.dev` sender, any attempt to email another player
 is rejected:

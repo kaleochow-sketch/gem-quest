@@ -57,37 +57,71 @@ function xpFrom(levels) {
   return { xp, stars, cleared };
 }
 
+/**
+ * Sends the sign-in link.
+ *
+ * Two providers are supported because they have different requirements, and
+ * the requirement is what usually blocks a small project:
+ *
+ *   Resend — needs a verified *domain* before it will mail anyone except the
+ *            account owner. Best once you own a domain.
+ *   Brevo  — needs a verified *sender address*, which is just a link in your
+ *            inbox. Works with no domain at all.
+ *
+ * Whichever key is present is used; Brevo wins if both are set.
+ */
 async function sendSignInEmail(env, email, link) {
-  if (!env.RESEND_API_KEY) return { ok: false, reason: 'email not configured' };
-  let detail = '';
-  const res = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${env.RESEND_API_KEY}`,
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      from: env.MAIL_FROM || 'Gem Quest <onboarding@resend.dev>',
-      to: [email],
-      subject: 'Your Gem Quest sign-in link',
-      text: `Tap to sign in to Gem Quest:\n\n${link}\n\nThe link works once and expires in 15 minutes. If you did not ask for it, ignore this email.`,
-      html: `<p>Tap to sign in to Gem Quest:</p><p><a href="${link}">Sign in</a></p><p style="color:#666;font-size:13px">The link works once and expires in 15 minutes. If you did not ask for it, ignore this email.</p>`,
-    }),
-  });
-  if (!res.ok) {
-    // Surface why, rather than telling the player a link is on its way when
-    // it is not. A rejected send is usually a bad key, or the sender domain
-    // not being verified with the provider.
+  const subject = 'Your Gem Quest sign-in link';
+  const text = `Tap to sign in to Gem Quest:\n\n${link}\n\nThe link works once and expires in 15 minutes. If you did not ask for it, ignore this email.`;
+  const html = `<p>Tap to sign in to Gem Quest:</p><p><a href="${link}">Sign in</a></p><p style="color:#666;font-size:13px">The link works once and expires in 15 minutes. If you did not ask for it, ignore this email.</p>`;
+
+  const fail = async (res) => {
+    let detail = `HTTP ${res.status}`;
     try {
       const body = await res.json();
-      detail = body?.message || body?.error?.message || `HTTP ${res.status}`;
+      detail = body?.message || body?.error?.message || detail;
     } catch {
-      detail = `HTTP ${res.status}`;
+      /* keep the status */
     }
     console.log('sign-in email failed:', detail);
     return { ok: false, reason: 'could not send the email', detail };
+  };
+
+  if (env.BREVO_API_KEY) {
+    const from = env.MAIL_FROM_ADDRESS || env.BREVO_SENDER;
+    if (!from) {
+      return { ok: false, reason: 'email not configured', detail: 'set MAIL_FROM_ADDRESS to your verified Brevo sender' };
+    }
+    const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: { 'api-key': env.BREVO_API_KEY, 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({
+        sender: { email: from, name: env.MAIL_FROM_NAME || 'Gem Quest' },
+        to: [{ email }],
+        subject,
+        textContent: text,
+        htmlContent: html,
+      }),
+    });
+    return res.ok ? { ok: true } : fail(res);
   }
-  return { ok: true };
+
+  if (env.RESEND_API_KEY) {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${env.RESEND_API_KEY}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        from: env.MAIL_FROM || 'Gem Quest <onboarding@resend.dev>',
+        to: [email],
+        subject,
+        text,
+        html,
+      }),
+    });
+    return res.ok ? { ok: true } : fail(res);
+  }
+
+  return { ok: false, reason: 'email not configured' };
 }
 
 async function sessionUser(env, request) {
