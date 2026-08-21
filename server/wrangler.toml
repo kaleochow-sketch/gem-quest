@@ -5,6 +5,10 @@ compatibility_date = "2024-11-01"
 [vars]
 # Where sign-in links send people back to.
 SITE_URL = "https://kaleochow-sketch.github.io/gem-quest/"
+# The sender address verified with Brevo. Mail is rejected unless this
+# matches a sender you have confirmed in their dashboard.
+MAIL_FROM_ADDRESS = "kaleo_chow@branson.org"
+MAIL_FROM_NAME = "Gem Quest"
 # Optional: a verified sender once you own a domain.
 # MAIL_FROM = "Gem Quest <hello@yourdomain>"
 
