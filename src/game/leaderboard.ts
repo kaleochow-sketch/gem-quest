@@ -1,5 +1,6 @@
 import { LEADERBOARD_URL, hasLeaderboard } from './config.js';
 import { Profile } from './save.js';
+import { totalStars } from './save.js';
 
 /**
  * Competition without a server.
@@ -93,6 +94,14 @@ export function personalBest(profile: Profile, limit = 15): RankRow[] {
 
 export function totalScore(profile: Profile): number {
   return Object.values(profile.levels).reduce((sum, r) => sum + r.bestScore, 0);
+}
+
+/**
+ * The career number shown on the global board: every best score, plus a
+ * bonus per star so breadth counts as well as depth.
+ */
+export function totalXp(profile: Profile): number {
+  return totalScore(profile) + totalStars(profile) * 2000;
 }
 
 export function levelsCleared(profile: Profile): number {

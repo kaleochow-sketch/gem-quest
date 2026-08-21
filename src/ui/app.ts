@@ -17,21 +17,30 @@ import {
   isRegionFinale,
   regionOf,
 } from '../game/levels.js';
+import {
+  Account,
+  adoptAccountProgress,
+  fetchXpBoard,
+  me as fetchMe,
+  requestSignIn,
+  signOut,
+  signedIn,
+  sync as syncAccount,
+  verifyToken,
+} from '../game/account.js';
 import { hasLeaderboard, hasPayments } from '../game/config.js';
 import {
   Challenge,
-  GlobalEntry,
   addChallenge,
   bestOn,
   cleanName,
   decodeChallenge,
   encodeChallenge,
   levelsCleared,
-  fetchTop,
   personalBest,
   sortChallenges,
   submitScore,
-  totalScore,
+  totalXp,
 } from '../game/leaderboard.js';
 import { LevelSession } from '../game/session.js';
 import {
@@ -189,6 +198,7 @@ export class App {
     this.bindBoardInput();
     this.takeChallengeFromUrl();
     void this.settlePurchase();
+    void this.restoreAccount();
     this.bindInstall();
     this.renderMap();
     this.refreshWallet();
@@ -556,6 +566,52 @@ export class App {
    * Leaderboard
    * ---------------------------------------------------------------- */
 
+  /**
+   * Handles a sign-in link if one brought us here, then restores any existing
+   * session. Progress from the account is merged in, so signing in on a new
+   * phone brings everything with it.
+   */
+  private async restoreAccount(): Promise<void> {
+    if (!hasLeaderboard()) return;
+    const token = new URLSearchParams(location.search).get('signin');
+    if (token) {
+      history.replaceState(null, '', location.pathname);
+      const account = await verifyToken(token);
+      if (!account) {
+        this.toast('That sign-in link has expired');
+      } else {
+        this.account = account;
+        const pulled = await fetchMe();
+        if (pulled) {
+          this.account = pulled.user;
+          this.accountRank = pulled.rank;
+          if (adoptAccountProgress(this.profile, pulled.user)) this.renderMap();
+        }
+        await this.pushProgress();
+        this.toast(`Signed in as ${this.account?.name ?? 'you'}`);
+        this.refreshWallet();
+        if (this.screen === 'ranks') this.renderRanks();
+      }
+      return;
+    }
+
+    if (!signedIn()) return;
+    const pulled = await fetchMe();
+    if (!pulled) return;
+    this.account = pulled.user;
+    this.accountRank = pulled.rank;
+    if (adoptAccountProgress(this.profile, pulled.user)) this.renderMap();
+    if (this.screen === 'ranks') this.renderRanks();
+  }
+
+  /** Sends local records up. Never blocks play. */
+  private async pushProgress(): Promise<void> {
+    const result = await syncAccount(this.profile);
+    if (!result) return;
+    this.account = result.user;
+    this.accountRank = result.rank;
+  }
+
   /** A challenge link carries the sender's result in the query string. */
   private takeChallengeFromUrl(): void {
     const payload = new URLSearchParams(location.search).get('c');
@@ -607,6 +663,8 @@ export class App {
     const body = $('ranks-body');
     body.innerHTML = '';
 
+    if (hasLeaderboard()) body.appendChild(this.accountBlock());
+
     const nameRow = document.createElement('div');
     nameRow.className = 'name-row';
     nameRow.innerHTML = `<input id="rank-name" maxlength="14" placeholder="Your name"
@@ -624,17 +682,19 @@ export class App {
     stats.innerHTML = `
       <div class="stat"><strong>${levelsCleared(this.profile)}</strong><small>Cleared</small></div>
       <div class="stat"><strong>${totalStars(this.profile)}</strong><small>Stars</small></div>
-      <div class="stat"><strong>${this.compact(totalScore(this.profile))}</strong><small>Total</small></div>
+      <div class="stat"><strong>${
+        this.accountRank ? '#' + this.accountRank : this.compact(totalXp(this.profile))
+      }</strong><small>${this.accountRank ? 'Global rank' : 'XP'}</small></div>
     `;
     body.appendChild(stats);
 
     if (hasLeaderboard()) {
-      body.appendChild(this.sectionTitle('Global — all levels'));
+      body.appendChild(this.sectionTitle('Global — total XP'));
       const host = document.createElement('div');
       host.id = 'global-board';
       host.appendChild(this.blurbLine('Loading…'));
       body.appendChild(host);
-      void this.loadGlobal(host);
+      void this.loadXpBoard(host);
     } else {
       body.appendChild(this.sectionTitle('Global'));
       body.appendChild(
@@ -678,33 +738,125 @@ export class App {
     );
   }
 
-  /** Fills the global section, degrading quietly when the service is down. */
-  private async loadGlobal(host: HTMLElement): Promise<void> {
-    try {
-      const entries = await fetchTop(0);
-      host.innerHTML = '';
-      if (!entries.length) {
-        host.appendChild(this.blurbLine('No scores yet — be the first.'));
+  /** Sign-in, or who you are signed in as. */
+  private accountBlock(): HTMLElement {
+    const wrap = document.createElement('div');
+
+    if (this.account) {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.innerHTML = `<div class="card-icon">✅</div>
+        <div class="card-body">
+          <div class="card-title">Signed in</div>
+          <div class="card-sub">${this.escape(this.account.email)} · progress is saved to your account</div>
+        </div>`;
+      const out = document.createElement('button');
+      out.className = 'buy-btn';
+      out.type = 'button';
+      out.textContent = 'Sign out';
+      out.addEventListener('click', async () => {
+        await signOut();
+        this.account = null;
+        this.accountRank = 0;
+        this.toast('Signed out');
+        this.renderRanks();
+      });
+      card.appendChild(out);
+      wrap.appendChild(card);
+      return wrap;
+    }
+
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.style.display = 'block';
+    card.innerHTML = `
+      <div class="card-title" style="margin-bottom:4px">Sign in to save your progress</div>
+      <div class="card-sub" style="margin-bottom:9px">Scores live on this device only. Sign in and they
+        follow you to any phone — and your name is yours on the global board. No password: we email a link.</div>
+      <div class="name-row" style="margin:0">
+        <input id="signin-email" type="email" inputmode="email" autocomplete="email"
+          placeholder="you@example.com" />
+      </div>
+    `;
+    const send = document.createElement('button');
+    send.className = 'btn btn-primary';
+    send.type = 'button';
+    send.style.marginTop = '9px';
+    send.textContent = 'Email me a link';
+    send.addEventListener('click', async () => {
+      const input = $<HTMLInputElement>('signin-email');
+      const email = input.value.trim();
+      if (!email) {
+        this.toast('Enter your email first');
         return;
       }
-      const me = this.profile.playerId;
-      entries.slice(0, 25).forEach((e: GlobalEntry, i) => {
+      send.disabled = true;
+      send.textContent = 'Sending…';
+      const error = await requestSignIn(email);
+      send.disabled = false;
+      send.textContent = 'Email me a link';
+      if (error) {
+        this.toast(error);
+        return;
+      }
+      this.openModal(`
+        <div class="modal-tag">Check your email</div>
+        <h2>Link sent</h2>
+        <p class="lead">We emailed a sign-in link to <strong>${this.escape(email)}</strong>.
+          Open it on this device. It works once and expires in 15 minutes.</p>
+        <div class="btn-row"><button class="btn btn-primary" data-close>Got it</button></div>
+      `);
+      this.wireClose();
+    });
+    card.appendChild(send);
+    wrap.appendChild(card);
+    return wrap;
+  }
+
+  /** The global XP table, with your own position pinned even if far down. */
+  private async loadXpBoard(host: HTMLElement): Promise<void> {
+    try {
+      const data = await fetchXpBoard(this.account?.uid);
+      host.innerHTML = '';
+      if (!data.entries.length) {
+        host.appendChild(this.blurbLine('No one has signed in yet — be the first on the board.'));
+        return;
+      }
+
+      const row = (rank: number, name: string, xp: number, sub: string, you: boolean) => {
         const el = document.createElement('div');
         el.className = 'rank-row';
-        if (e.player === me) el.dataset.you = 'true';
+        if (you) el.dataset.you = 'true';
         el.innerHTML = `
-          <div class="rank-pos">${i + 1}</div>
+          <div class="rank-pos">${rank}</div>
           <div class="rank-main">
-            <div class="rank-title">${this.escape(e.name)}${e.player === me ? ' (you)' : ''}</div>
-            <div class="rank-sub">Level ${e.level} · ${'★'.repeat(e.stars)}</div>
+            <div class="rank-title">${this.escape(name)}${you ? ' (you)' : ''}</div>
+            <div class="rank-sub">${sub}</div>
           </div>
-          <div class="rank-score">${e.score.toLocaleString()}</div>
+          <div class="rank-score">${xp.toLocaleString()}</div>
         `;
-        host.appendChild(el);
+        return el;
+      };
+
+      data.entries.forEach((e, i) => {
+        host.appendChild(
+          row(i + 1, e.name, e.xp, `${e.cleared} levels · ${e.stars}★`, e.uid === this.account?.uid),
+        );
       });
+
+      const inTop = data.entries.some((e) => e.uid === this.account?.uid);
+      if (data.you && !inTop) {
+        host.appendChild(this.sectionTitle('Your position'));
+        for (const near of data.you.around) {
+          host.appendChild(
+            row(near.rank, near.name, near.xp, '', near.uid === this.account?.uid),
+          );
+        }
+      }
+      host.appendChild(this.blurbLine(`${data.total.toLocaleString()} players ranked.`));
     } catch {
       host.innerHTML = '';
-      host.appendChild(this.blurbLine('Could not reach the leaderboard. Your local scores are unaffected.'));
+      host.appendChild(this.blurbLine('Could not reach the global board. Your local scores are unaffected.'));
     }
   }
 
@@ -1733,6 +1885,9 @@ export class App {
   }
 
   private hudKey = '';
+  /** The signed-in account, when there is one. */
+  private account: Account | null = null;
+  private accountRank = 0;
 
   private renderHud(): void {
     const session = this.session;
@@ -2010,6 +2165,7 @@ export class App {
       void submitScore(this.profile, session.def.id, session.score, stars).then((result) => {
         if (result && result.rank > 0) this.toast(`Global rank #${result.rank} on level ${session.def.id}`);
       });
+      void this.pushProgress();
 
       const nextId = Math.min(session.def.id + 1, TOTAL_LEVELS);
       this.openModal(`

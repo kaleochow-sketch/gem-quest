@@ -34,6 +34,36 @@ random device id and whatever name the player types, no accounts, no email.
 
 ---
 
+## 3. Email sign-in (accounts)
+
+The account endpoints are already deployed with the leaderboard Worker. They
+need one thing to work: somewhere to send email from.
+
+```bash
+# 1. Sign up at https://resend.com (free tier, no card, no domain needed)
+# 2. Create an API key in their dashboard
+cd server
+npx wrangler secret put RESEND_API_KEY
+npx wrangler deploy
+```
+
+Until that key exists, `POST /auth/request` answers `503 email not configured`
+and the game tells the player accounts are not available yet — rather than
+silently failing.
+
+Resend's free tier sends from `onboarding@resend.dev`, which is fine to start.
+Once you own a domain, verify it with them and set `MAIL_FROM` in
+`wrangler.toml` so the mail comes from you.
+
+**How sign-in works.** The player types an email; the Worker stores a random
+single-use token for 15 minutes and emails a link. Opening the link exchanges
+the token for a long-lived session token, which the client keeps. There is no
+password anywhere. Requests for a link always answer the same way whether or
+not the address has an account, so the endpoint cannot be used to discover who
+has signed up.
+
+---
+
 ## 2. Payments
 
 This one takes real money, so read this part properly.
