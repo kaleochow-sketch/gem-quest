@@ -37,6 +37,10 @@ export interface Profile {
   playerName?: string;
   /** Stable anonymous id used to hold one row on the global board. */
   playerId?: string;
+  /** Purchased coins already credited on this device. */
+  coinsClaimed?: number;
+  /** Permanent things bought with real money. */
+  perks?: Record<string, boolean>;
   /** Results other players have sent you. */
   challenges?: import('./leaderboard.js').Challenge[];
   /** Permanent entitlements bought with real money. */
@@ -67,6 +71,8 @@ function defaultProfile(): Profile {
     musicOn: true,
     lowFx: false,
     playerName: '',
+    coinsClaimed: 0,
+    perks: {},
     challenges: [],
     purchases: [],
     seen: [],

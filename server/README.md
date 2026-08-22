@@ -101,6 +101,121 @@ has signed up.
 
 ---
 
+## 2. Payments (real money)
+
+Payments live in the same Worker as the leaderboard. Entitlements are granted
+to the **account**, not the device, so a purchase survives clearing a browser
+or changing phone — which is why buying requires being signed in.
+
+```bash
+# 1. Create a Stripe account at https://dashboard.stripe.com/register
+# 2. Copy the SECRET key (sk_live_… or sk_test_… while testing)
+cd server
+npx wrangler secret put STRIPE_SECRET_KEY
+npx wrangler deploy
+```
+
+Until that key exists, `/store` reports `enabled: false`, the game hides the
+Store tab entirely, and `/checkout` answers `503`. Nothing half-works.
+
+**Test it before going live.** With a `sk_test_` key, Stripe accepts card
+`4242 4242 4242 4242`, any future expiry and any CVC. Real money only moves
+once you swap in the `sk_live_` key.
+
+### How a purchase is protected
+
+- **Prices come from the server.** The client sends only a SKU, so nobody can
+  pay a penny for a chest of coins.
+- **Only Stripe decides it was paid.** The game asks the Worker, and the Worker
+  asks Stripe.
+- **An order grants once.** Replaying the return URL adds nothing.
+- **An order belongs to one account.** Another signed-in user confirming your
+  session id is refused.
+- **A sync cannot forge entitlements.** Coins and perks are carried over from
+  the stored record, never taken from the request body.
+- **A closed tab does not lose a payment.** Pending orders are reconciled
+  against Stripe whenever the account loads.
+
+### Before you take real money
+
+These are yours, not the code's:
+
+- Stripe onboarding needs your identity and a bank account for payouts.
+- Refunds, chargebacks and receipts are handled through Stripe, by you.
+- Digital goods attract VAT/sales tax in many places. Stripe Tax can compute it;
+  registering and remitting is still your responsibility.
+- **A cartoon match-3 game attracts children.** Selling to minors is regulated
+  differently in most countries — the UK, EU and US all have rules about
+  in-app purchases aimed at kids, and about refunds when a child spends without
+  permission. Worth reading before switching the live key on.
+
+## 3. Email sign-in (accounts)
+
+The account endpoints are already deployed with the leaderboard Worker. They
+need one thing to work: somewhere to send email from.
+
+```bash
+# 1. Sign up at https://resend.com (free tier, no card, no domain needed)
+# 2. Create an API key in their dashboard
+cd server
+npx wrangler secret put RESEND_API_KEY
+npx wrangler deploy
+```
+
+Until that key exists, `POST /auth/request` answers `503 email not configured`
+and the game tells the player accounts are not available yet — rather than
+silently failing.
+
+### Choosing a provider
+
+The Worker supports two, because their requirements differ and the requirement
+is what actually blocks a small project:
+
+| | Needs | Good when |
+|---|---|---|
+| **Brevo** | a verified *sender address* — one link in your inbox | you have no domain |
+| **Resend** | a verified *domain* | you own a domain |
+
+Whichever key is set is used; Brevo takes precedence if both are.
+
+```bash
+# Brevo: no domain required
+cd server
+npx wrangler secret put BREVO_API_KEY
+# then set the verified sender in wrangler.toml:
+#   MAIL_FROM_ADDRESS = "you@youremail.com"
+npx wrangler deploy
+```
+
+### The Resend restriction
+
+**Resend will only send to your own address until you verify a domain.** With
+the default `onboarding@resend.dev` sender, any attempt to email another player
+is rejected:
+
+> You can only send testing emails to your own email address. To send emails to
+> other recipients, please verify a domain at resend.com/domains
+
+So sign-in works for you today, and for nobody else. To open it to players:
+
+1. Verify a domain at <https://resend.com/domains> (a subdomain like
+   `mail.yourdomain.com` is fine; it needs a few DNS records).
+2. Set `MAIL_FROM = "Gem Quest <hello@yourdomain>"` in `wrangler.toml`.
+3. `npx wrangler deploy`.
+
+The Worker reports a failed send as `502` with the provider's reason attached,
+rather than claiming a link is on its way. That matters: without it the game
+tells every player to check an inbox that will never receive anything.
+
+**How sign-in works.** The player types an email; the Worker stores a random
+single-use token for 15 minutes and emails a link. Opening the link exchanges
+the token for a long-lived session token, which the client keeps. There is no
+password anywhere. Requests for a link always answer the same way whether or
+not the address has an account, so the endpoint cannot be used to discover who
+has signed up.
+
+---
+
 ## 2. Payments
 
 This one takes real money, so read this part properly.

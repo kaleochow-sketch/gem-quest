@@ -28,7 +28,7 @@ import {
   sync as syncAccount,
   verifyToken,
 } from '../game/account.js';
-import { hasLeaderboard, hasPayments } from '../game/config.js';
+import { hasLeaderboard } from '../game/config.js';
 import {
   Challenge,
   addChallenge,
@@ -44,14 +44,14 @@ import {
 } from '../game/leaderboard.js';
 import { LevelSession } from '../game/session.js';
 import {
-  STORE,
-  Sku,
-  grant,
-  owns,
-  purchasedCoinMultiplier,
-  purchasedExtraLives,
-  purchasedExtraMoves,
-  redeem,
+  Entitlements,
+  StoreItem,
+  applyEntitlements,
+  confirmPurchase,
+  fetchCatalogue,
+  hasPerk,
+  iconFor,
+  priceLabel,
   startCheckout,
 } from '../game/store.js';
 import {
@@ -199,6 +199,7 @@ export class App {
     this.takeChallengeFromUrl();
     void this.settlePurchase();
     void this.restoreAccount();
+    void this.probeStore();
     this.bindInstall();
     this.renderMap();
     this.refreshWallet();
@@ -604,6 +605,19 @@ export class App {
     if (this.screen === 'ranks') this.renderRanks();
   }
 
+  /** Asks whether the server is selling anything, so the tab can stay hidden. */
+  private async probeStore(): Promise<void> {
+    if (!hasLeaderboard()) return;
+    try {
+      const { enabled } = await fetchCatalogue();
+      if (enabled === this.storeEnabled) return;
+      this.storeEnabled = enabled;
+      if (this.screen === 'shop') this.renderShop();
+    } catch {
+      /* the shop simply stays hidden */
+    }
+  }
+
   /** Sends local records up. Never blocks play. */
   private async pushProgress(): Promise<void> {
     const result = await syncAccount(this.profile);
@@ -960,7 +974,7 @@ export class App {
       { id: 'powerups', label: 'Power-ups' },
       { id: 'upgrades', label: 'Upgrades' },
     ];
-    if (hasPayments()) tabDefs.push({ id: 'store', label: '💎 Store' });
+    if (this.storeEnabled) tabDefs.push({ id: 'store', label: '💎 Store' });
     if (this.profile.dev) tabDefs.push({ id: 'dev', label: '🛠 Dev' });
     for (const tab of tabDefs) {
       const btn = document.createElement('button');
@@ -1382,58 +1396,91 @@ export class App {
   private renderStore(body: HTMLElement): void {
     body.appendChild(
       this.blurbLine(
-        'Paid with a card through Stripe. Card details never reach this game. ' +
-          'Purchases are tied to this device, since there are no accounts.',
+        'Paid by card through Stripe — no card details reach this game. ' +
+          'Purchases belong to your account, so they follow you to any device.',
       ),
     );
 
-    for (const item of STORE) {
-      const held = item.permanent && owns(this.profile, item.sku);
+    if (!this.account) {
       const card = document.createElement('div');
       card.className = 'card';
-      card.innerHTML = `
-        <div class="card-icon">${item.icon}</div>
-        <div class="card-body">
-          <div class="card-title">${item.name}${held ? ' <span class="owned">owned</span>' : ''}</div>
-          <div class="card-sub">${item.blurb}</div>
-        </div>
-      `;
-      const btn = document.createElement('button');
-      btn.className = 'buy-btn';
-      btn.type = 'button';
-      btn.textContent = held ? 'Owned' : item.price;
-      btn.disabled = held;
-      btn.addEventListener('click', () => void this.buy(item.sku, btn));
-      card.appendChild(btn);
+      card.innerHTML = `<div class="card-icon">🔒</div>
+        <div class="card-body"><div class="card-title">Sign in to buy</div>
+        <div class="card-sub">Purchases are tied to your account. Without one they would be lost
+        the moment this browser is cleared, so buying needs you signed in.</div></div>`;
+      const go = document.createElement('button');
+      go.className = 'buy-btn';
+      go.type = 'button';
+      go.textContent = 'Sign in';
+      go.addEventListener('click', () => this.show('ranks'));
+      card.appendChild(go);
       body.appendChild(card);
+      return;
     }
 
-    body.appendChild(
-      this.blurbLine(
-        'Payments are handled by Stripe. Refunds and receipts come from them; ' +
-          'clearing this browser\'s data will lose device-bound purchases.',
-      ),
-    );
+    const host = document.createElement('div');
+    host.appendChild(this.blurbLine('Loading…'));
+    body.appendChild(host);
+    void this.loadCatalogue(host);
   }
 
-  private async buy(sku: Sku, btn: HTMLButtonElement): Promise<void> {
-    btn.disabled = true;
-    btn.textContent = 'Opening…';
+  private async loadCatalogue(host: HTMLElement): Promise<void> {
     try {
-      const url = await startCheckout(this.profile, sku);
-      if (!url) {
-        this.toast('Could not start checkout');
-        this.renderShop();
+      const { enabled, currency, items } = await fetchCatalogue();
+      host.innerHTML = '';
+      if (!enabled) {
+        host.appendChild(this.blurbLine('The shop is not open yet.'));
+        return;
+      }
+      for (const item of items) host.appendChild(this.storeCard(item, currency));
+      host.appendChild(
+        this.blurbLine(
+          'Stripe handles the payment and sends the receipt; refunds go through them too. ' +
+            'Perks apply from the next level you start.',
+        ),
+      );
+    } catch {
+      host.innerHTML = '';
+      host.appendChild(this.blurbLine('Could not load the shop. Your progress is unaffected.'));
+    }
+  }
+
+  private storeCard(item: StoreItem, currency: string): HTMLElement {
+    const owned = item.perk ? hasPerk(this.profile, item.perk) : false;
+    const [title, detail] = item.name.split(' — ');
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `
+      <div class="card-icon">${iconFor(item.sku)}</div>
+      <div class="card-body">
+        <div class="card-title">${this.escape(title)}${owned ? ' <span class="owned">owned</span>' : ''}</div>
+        <div class="card-sub">${this.escape(detail ?? `${item.coins.toLocaleString()} coins`)}</div>
+      </div>
+    `;
+    const btn = document.createElement('button');
+    btn.className = 'buy-btn';
+    btn.type = 'button';
+    btn.textContent = owned ? 'Owned' : priceLabel(item.amount, currency);
+    btn.disabled = owned;
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      btn.textContent = '…';
+      const { url, error } = await startCheckout(item.sku);
+      if (error || !url) {
+        btn.disabled = false;
+        btn.textContent = priceLabel(item.amount, currency);
+        this.toast(error ?? 'Could not start checkout');
         return;
       }
       location.href = url;
-    } catch {
-      this.toast('Could not reach the payment service');
-      this.renderShop();
-    }
+    });
+    card.appendChild(btn);
+    return card;
   }
 
+
   /** Stripe returns here; nothing is granted until the server confirms payment. */
+  /** Confirms a checkout the player has just returned from. */
   private async settlePurchase(): Promise<void> {
     const params = new URLSearchParams(location.search);
     const session = params.get('purchase');
@@ -1443,19 +1490,29 @@ export class App {
       this.toast('Purchase cancelled');
       return;
     }
-    const sku = await redeem(session);
-    if (!sku) {
-      this.toast('Could not confirm that payment');
+    const entitlements = await confirmPurchase(session);
+    if (!entitlements) {
+      // Not lost: the server reconciles unclaimed orders on the next load.
+      this.toast('Could not confirm that payment yet — it will apply next time you open the game');
       return;
     }
-    const message = grant(this.profile, sku);
-    saveProfile(this.profile);
+    this.grantEntitlements(entitlements, true);
+  }
+
+  /** Applies purchased coins and perks, and says what arrived. */
+  private grantEntitlements(entitlements: Entitlements | null | undefined, announce = false): void {
+    const credited = applyEntitlements(this.profile, entitlements);
     this.refreshWallet();
+    if (!announce) return;
     audio.sfx('coin');
     this.openModal(`
       <div class="modal-tag">Purchase complete</div>
       <h2>Thank you</h2>
-      <p class="lead">${message}.</p>
+      <p class="lead">${
+        credited
+          ? `<strong>${credited.toLocaleString()}</strong> coins added to your account.`
+          : 'Your purchase is active on this account.'
+      }</p>
       <div class="btn-row"><button class="btn btn-primary" data-close>Play</button></div>
     `);
     this.wireClose();
@@ -1531,7 +1588,7 @@ export class App {
   }
 
   private showLivesInfo(): void {
-    const cap = maxLives(this.profile.upgrades) + purchasedExtraLives(this.profile);
+    const cap = maxLives(this.profile.upgrades) + (hasPerk(this.profile, 'nine_lives') ? 5 : 0);
     const ms = msToNextLife(this.profile);
     const mins = Math.ceil(ms / 60000);
     this.openModal(`
@@ -1853,7 +1910,7 @@ export class App {
       extraMoves:
         extraMovesFrom(this.profile.upgrades) +
         boosterExtraMoves(this.chosenBoosters) +
-        purchasedExtraMoves(this.profile),
+        (hasPerk(this.profile, 'golden_paw') ? 2 : 0),
       startingSpecials: [
         ...boosterSpecials(this.chosenBoosters),
         ...starlightSpecials(this.profile.upgrades),
@@ -1887,6 +1944,8 @@ export class App {
   private hudKey = '';
   /** The signed-in account, when there is one. */
   private account: Account | null = null;
+  /** The server only advertises a shop once payments are configured. */
+  private storeEnabled = false;
   private accountRank = 0;
 
   private renderHud(): void {
@@ -2156,7 +2215,7 @@ export class App {
       const { firstClear } = recordResult(this.profile, session.def.id, stars, session.score);
       const coins = Math.round(
         coinReward(stars, session.leftoverMoves, firstClear, this.profile.upgrades, session.def.id) *
-          purchasedCoinMultiplier(this.profile),
+          (hasPerk(this.profile, 'treasure_hound') ? 1.5 : 1),
       );
       this.profile.coins += coins;
       saveProfile(this.profile);

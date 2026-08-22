@@ -10,8 +10,11 @@
 /** Base URL of the leaderboard Worker, e.g. https://gem-quest-leaderboard.you.workers.dev */
 export const LEADERBOARD_URL = 'https://gem-quest-leaderboard.kaleo-chow.workers.dev';
 
-/** Base URL of the payments Worker. Leave empty to hide paid items entirely. */
-export const PAYMENTS_URL = '';
+/**
+ * Payments are served by the same Worker as the leaderboard, so there is no
+ * separate URL. Whether the shop appears is decided by the server, which
+ * reports it only once a Stripe key is configured.
+ */
 
 export const hasLeaderboard = (): boolean => LEADERBOARD_URL.length > 0;
-export const hasPayments = (): boolean => PAYMENTS_URL.length > 0;
+

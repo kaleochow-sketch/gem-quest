@@ -18,6 +18,102 @@ const RATE_LIMIT = 20;
 const RATE_WINDOW_S = 60;
 
 
+
+/* ------------------------------------------------------------------ *
+ * Payments
+ *
+ * The card never touches this code or the game: the player goes to a
+ * Stripe-hosted page. This Worker only creates the session and afterwards
+ * asks Stripe whether it was actually paid.
+ *
+ * Entitlements are granted to the *account*, not the device, so a purchase
+ * survives clearing a browser or changing phone. That is the whole reason
+ * buying requires being signed in.
+ * ------------------------------------------------------------------ */
+
+/**
+ * The catalogue lives on the server. Prices must never come from the client,
+ * or a player could pay one cent for anything.
+ */
+const CATALOGUE = {
+  coins_small: { name: 'Pouch of 5,000 coins', amount: 199, coins: 5000 },
+  coins_large: { name: 'Chest of 30,000 coins', amount: 799, coins: 30000 },
+  golden_paw: { name: 'Golden Paw — +2 moves on every level, forever', amount: 499, perk: 'golden_paw' },
+  treasure_hound: { name: 'Treasure Hound — +50% coins, forever', amount: 499, perk: 'treasure_hound' },
+  nine_lives: { name: 'Nine Lives — +5 maximum lives, forever', amount: 399, perk: 'nine_lives' },
+};
+
+const CURRENCY = 'usd';
+
+function form(params) {
+  return Object.entries(params)
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+    .join('&');
+}
+
+async function stripe(env, path, method = 'GET', params) {
+  const res = await fetch(`https://api.stripe.com/v1${path}`, {
+    method,
+    headers: {
+      authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    ...(params ? { body: form(params) } : {}),
+  });
+  const body = await res.json();
+  return { ok: res.ok, body };
+}
+
+/** Applies a paid order to the account. Idempotent: an order grants once. */
+async function grantOrder(env, uid, sku, orderId) {
+  const raw = await env.SCORES.get(`user:${uid}`);
+  if (!raw) return null;
+  const user = JSON.parse(raw);
+  user.orders = user.orders ?? [];
+  if (user.orders.includes(orderId)) return user;
+
+  const item = CATALOGUE[sku];
+  if (!item) return user;
+  user.orders.push(orderId);
+  if (item.coins) user.coinsGranted = (user.coinsGranted ?? 0) + item.coins;
+  if (item.perk) {
+    user.perks = user.perks ?? {};
+    user.perks[item.perk] = true;
+  }
+  await env.SCORES.put(`user:${uid}`, JSON.stringify(user));
+  return user;
+}
+
+/**
+ * Reconciles anything the player paid for but never came back to claim —
+ * a closed tab, a dropped connection. Called whenever the account loads.
+ */
+async function reconcileOrders(env, uid) {
+  if (!env.STRIPE_SECRET_KEY) return;
+  const raw = await env.SCORES.get(`pending:${uid}`);
+  if (!raw) return;
+  const pending = JSON.parse(raw);
+  const stillOpen = [];
+  for (const order of pending.slice(0, 20)) {
+    const { ok, body } = await stripe(env, `/checkout/sessions/${order.id}`);
+    if (ok && body.payment_status === 'paid') {
+      await grantOrder(env, uid, order.sku, order.id);
+    } else if (ok && body.status === 'open') {
+      stillOpen.push(order);
+    }
+    // Expired or cancelled sessions are simply dropped.
+  }
+  if (stillOpen.length) await env.SCORES.put(`pending:${uid}`, JSON.stringify(stillOpen));
+  else await env.SCORES.delete(`pending:${uid}`);
+}
+
+function entitlementsOf(user) {
+  return {
+    coinsGranted: user.coinsGranted ?? 0,
+    perks: user.perks ?? {},
+  };
+}
+
 /* ------------------------------------------------------------------ *
  * Accounts
  *
@@ -201,6 +297,89 @@ export default {
     const url = new URL(request.url);
 
 
+
+    /* ---------------- payments ---------------- */
+
+    if (request.method === 'GET' && url.pathname === '/store') {
+      // The client renders whatever the server sells, so prices cannot drift.
+      return json({
+        enabled: Boolean(env.STRIPE_SECRET_KEY),
+        currency: CURRENCY,
+        items: Object.entries(CATALOGUE).map(([sku, i]) => ({
+          sku,
+          name: i.name,
+          amount: i.amount,
+          coins: i.coins ?? 0,
+          perk: i.perk ?? null,
+        })),
+      });
+    }
+
+    if (request.method === 'POST' && url.pathname === '/checkout') {
+      if (!env.STRIPE_SECRET_KEY) return json({ error: 'payments not configured' }, 503);
+      const user = await sessionUser(env, request);
+      // Buying requires an account, so the purchase belongs to a person
+      // rather than to whichever browser happened to be open.
+      if (!user) return json({ error: 'sign in first' }, 401);
+
+      let body;
+      try {
+        body = await request.json();
+      } catch {
+        return json({ error: 'bad json' }, 400);
+      }
+      const sku = String(body.sku ?? '');
+      const item = CATALOGUE[sku];
+      if (!item) return json({ error: 'unknown item' }, 400);
+
+      const site = env.SITE_URL || '';
+      const { ok, body: session } = await stripe(env, '/checkout/sessions', 'POST', {
+        mode: 'payment',
+        'line_items[0][quantity]': 1,
+        'line_items[0][price_data][currency]': CURRENCY,
+        'line_items[0][price_data][unit_amount]': item.amount,
+        'line_items[0][price_data][product_data][name]': item.name,
+        success_url: `${site}?purchase={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${site}?purchase=cancelled`,
+        client_reference_id: user.uid,
+        'metadata[sku]': sku,
+        'metadata[uid]': user.uid,
+      });
+      if (!ok) return json({ error: 'could not start checkout', detail: session?.error?.message }, 502);
+
+      // Remember it, so a closed tab does not lose a paid order.
+      const rawPending = await env.SCORES.get(`pending:${user.uid}`);
+      const pending = rawPending ? JSON.parse(rawPending) : [];
+      pending.push({ id: session.id, sku });
+      await env.SCORES.put(`pending:${user.uid}`, JSON.stringify(pending.slice(-20)));
+
+      return json({ url: session.url });
+    }
+
+    if (request.method === 'POST' && url.pathname === '/purchase/confirm') {
+      if (!env.STRIPE_SECRET_KEY) return json({ error: 'payments not configured' }, 503);
+      const user = await sessionUser(env, request);
+      if (!user) return json({ error: 'sign in first' }, 401);
+
+      let body;
+      try {
+        body = await request.json();
+      } catch {
+        return json({ error: 'bad json' }, 400);
+      }
+      const id = String(body.session ?? '');
+      if (!/^cs_[A-Za-z0-9_]+$/.test(id)) return json({ error: 'bad session' }, 400);
+
+      const { ok, body: session } = await stripe(env, `/checkout/sessions/${id}`);
+      if (!ok) return json({ error: 'could not check the payment' }, 502);
+      // Only Stripe decides whether this was paid, and only for this account.
+      if (session.payment_status !== 'paid') return json({ error: 'not paid' }, 402);
+      if (session.metadata?.uid !== user.uid) return json({ error: 'not your order' }, 403);
+
+      const updated = await grantOrder(env, user.uid, session.metadata.sku, id);
+      return json({ ok: true, entitlements: entitlementsOf(updated ?? {}) });
+    }
+
     /* ---------------- accounts ---------------- */
 
     if (request.method === 'POST' && url.pathname === '/auth/request') {
@@ -265,10 +444,17 @@ export default {
     }
 
     if (request.method === 'GET' && url.pathname === '/me') {
-      const user = await sessionUser(env, request);
+      let user = await sessionUser(env, request);
       if (!user) return json({ error: 'not signed in' }, 401);
+      // Pick up anything paid for but never claimed.
+      await reconcileOrders(env, user.uid);
+      user = (await sessionUser(env, request)) ?? user;
       const rank = await updateXpBoard(env, user);
-      return json({ user: { uid: user.uid, name: user.name, email: user.email, xp: user.xp, stars: user.stars, cleared: user.cleared, levels: user.levels }, rank });
+      return json({
+        user: { uid: user.uid, name: user.name, email: user.email, xp: user.xp, stars: user.stars, cleared: user.cleared, levels: user.levels },
+        rank,
+        entitlements: entitlementsOf(user),
+      });
     }
 
     if (request.method === 'POST' && url.pathname === '/sync') {
@@ -301,10 +487,20 @@ export default {
       if (BLOCKED.test(name)) return json({ error: 'name rejected' }, 400);
 
       const totals = xpFrom(merged);
-      const updated = { email: user.email, name, levels: merged, ...totals };
+      const updated = {
+        email: user.email,
+        name,
+        levels: merged,
+        ...totals,
+        // Purchases are not the client's to send, so they are carried over
+        // rather than taken from the request.
+        orders: user.orders ?? [],
+        coinsGranted: user.coinsGranted ?? 0,
+        perks: user.perks ?? {},
+      };
       await env.SCORES.put(`user:${user.uid}`, JSON.stringify(updated));
       const rank = await updateXpBoard(env, { uid: user.uid, ...updated });
-      return json({ ok: true, user: { uid: user.uid, ...updated }, rank });
+      return json({ ok: true, user: { uid: user.uid, ...updated }, rank, entitlements: entitlementsOf(updated) });
     }
 
     if (request.method === 'POST' && url.pathname === '/auth/signout') {

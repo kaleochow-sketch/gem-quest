@@ -1,134 +1,111 @@
-import { PAYMENTS_URL, hasPayments } from './config.js';
-import { playerId } from './leaderboard.js';
-import { Profile } from './save.js';
+import { LEADERBOARD_URL, hasLeaderboard } from './config.js';
+import { Profile, saveProfile } from './save.js';
+import { sessionToken } from './account.js';
 
 /**
- * Real-money items.
+ * Real-money purchases.
  *
- * The catalogue and its prices are authoritative on the server; this list is
- * only for display, so a tampered client can misdescribe an item but cannot
- * change what it costs. Entitlements are granted to the device that paid,
- * because the game has no accounts — see `server/payments-worker.js`.
+ * The catalogue and the prices come from the server, never from here: if the
+ * client proposed a price, a player could pay a penny for anything. The card
+ * is entered on a Stripe-hosted page, so no payment detail touches this game.
+ *
+ * Entitlements belong to the account rather than the device, which is why
+ * buying requires signing in — otherwise clearing a browser would destroy
+ * something someone paid for.
  */
 
-export type Sku = 'coins_small' | 'coins_large' | 'golden_paw' | 'treasure_hound' | 'nine_lives';
-
 export interface StoreItem {
-  sku: Sku;
+  sku: string;
   name: string;
-  blurb: string;
-  icon: string;
-  /** Display only. The server charges its own price. */
-  price: string;
-  /** One-off consumable, or a permanent entitlement. */
-  permanent: boolean;
+  /** Minor units, e.g. 199 = $1.99. */
+  amount: number;
+  coins: number;
+  perk: string | null;
 }
 
-export const STORE: StoreItem[] = [
-  {
-    sku: 'coins_small',
-    name: 'Pouch of coins',
-    blurb: '5,000 coins, straight away.',
-    icon: '💰',
-    price: '$1.99',
-    permanent: false,
-  },
-  {
-    sku: 'coins_large',
-    name: 'Chest of coins',
-    blurb: '30,000 coins — the better value.',
-    icon: '🧰',
-    price: '$7.99',
-    permanent: false,
-  },
-  {
-    sku: 'golden_paw',
-    name: 'Golden Paw',
-    blurb: '+2 moves on every level, forever.',
-    icon: '🐾',
-    price: '$4.99',
-    permanent: true,
-  },
-  {
-    sku: 'treasure_hound',
-    name: 'Treasure Hound',
-    blurb: '+50% coins from every level, forever.',
-    icon: '🦴',
-    price: '$4.99',
-    permanent: true,
-  },
-  {
-    sku: 'nine_lives',
-    name: 'Nine Lives',
-    blurb: '+5 maximum lives, forever.',
-    icon: '❤️‍🔥',
-    price: '$3.99',
-    permanent: true,
-  },
-];
-
-export function owns(profile: Profile, sku: Sku): boolean {
-  return (profile.purchases ?? []).includes(sku);
+export interface Entitlements {
+  coinsGranted: number;
+  perks: Record<string, boolean>;
 }
 
-/** Applies what was bought. Coins stack; entitlements are recorded once. */
-export function grant(profile: Profile, sku: Sku): string {
-  if (!profile.purchases) profile.purchases = [];
-  switch (sku) {
-    case 'coins_small':
-      profile.coins += 5000;
-      return '5,000 coins added';
-    case 'coins_large':
-      profile.coins += 30000;
-      return '30,000 coins added';
-    default:
-      if (!profile.purchases.includes(sku)) profile.purchases.push(sku);
-      return 'Unlocked';
+const ICONS: Record<string, string> = {
+  coins_small: '🪙',
+  coins_large: '💰',
+  golden_paw: '🐾',
+  treasure_hound: '🦴',
+  nine_lives: '❤️',
+};
+
+export const iconFor = (sku: string): string => ICONS[sku] ?? '💎';
+
+export function priceLabel(amount: number, currency = 'usd'): string {
+  const symbol = currency === 'usd' ? '$' : '';
+  return `${symbol}${(amount / 100).toFixed(2)}`;
+}
+
+async function api(path: string, init: RequestInit = {}): Promise<Response> {
+  const token = sessionToken();
+  return fetch(`${LEADERBOARD_URL}${path}`, {
+    ...init,
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...(init.headers ?? {}),
+    },
+  });
+}
+
+export async function fetchCatalogue(): Promise<{ enabled: boolean; currency: string; items: StoreItem[] }> {
+  if (!hasLeaderboard()) return { enabled: false, currency: 'usd', items: [] };
+  const res = await fetch(`${LEADERBOARD_URL}/store`);
+  if (!res.ok) throw new Error(`store ${res.status}`);
+  return (await res.json()) as { enabled: boolean; currency: string; items: StoreItem[] };
+}
+
+/** Returns the Stripe URL to send the player to, or an error string. */
+export async function startCheckout(sku: string): Promise<{ url?: string; error?: string }> {
+  try {
+    const res = await api('/checkout', { method: 'POST', body: JSON.stringify({ sku }) });
+    if (res.status === 401) return { error: 'Sign in before buying' };
+    if (res.status === 503) return { error: 'Payments are not switched on yet' };
+    const body = (await res.json()) as { url?: string; error?: string };
+    if (!res.ok || !body.url) return { error: body.error ?? 'Could not start checkout' };
+    return { url: body.url };
+  } catch {
+    return { error: 'Could not reach the payment service' };
   }
 }
 
-/* ------------------------------------------------------------------ *
- * Entitlement effects
- * ------------------------------------------------------------------ */
-
-export function purchasedExtraMoves(profile: Profile): number {
-  return owns(profile, 'golden_paw') ? 2 : 0;
-}
-
-export function purchasedCoinMultiplier(profile: Profile): number {
-  return owns(profile, 'treasure_hound') ? 1.5 : 1;
-}
-
-export function purchasedExtraLives(profile: Profile): number {
-  return owns(profile, 'nine_lives') ? 5 : 0;
-}
-
-/* ------------------------------------------------------------------ *
- * Checkout
- * ------------------------------------------------------------------ */
-
-/** Sends the player to Stripe's hosted page. Cards never reach this app. */
-export async function startCheckout(profile: Profile, sku: Sku): Promise<string | null> {
-  if (!hasPayments()) return null;
-  const res = await fetch(`${PAYMENTS_URL}/checkout`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ sku, player: playerId(profile) }),
-  });
-  if (!res.ok) return null;
-  const data = (await res.json()) as { url?: string };
-  return data.url ?? null;
-}
-
-/** Verifies a completed session with the server before granting anything. */
-export async function redeem(sessionId: string): Promise<Sku | null> {
-  if (!hasPayments()) return null;
+/** Asks the server to confirm a completed checkout with Stripe. */
+export async function confirmPurchase(session: string): Promise<Entitlements | null> {
   try {
-    const res = await fetch(`${PAYMENTS_URL}/redeem?session_id=${encodeURIComponent(sessionId)}`);
+    const res = await api('/purchase/confirm', { method: 'POST', body: JSON.stringify({ session }) });
     if (!res.ok) return null;
-    const data = (await res.json()) as { ok?: boolean; sku?: Sku };
-    return data.ok && data.sku ? data.sku : null;
+    const body = (await res.json()) as { entitlements?: Entitlements };
+    return body.entitlements ?? null;
   } catch {
     return null;
   }
 }
+
+/**
+ * Credits any purchased coins not yet applied on this device, and mirrors the
+ * perks locally. Comparing against a claimed total makes this safe to run on
+ * every load and on every device.
+ */
+export function applyEntitlements(profile: Profile, ent: Entitlements | null | undefined): number {
+  if (!ent) return 0;
+  const granted = ent.coinsGranted ?? 0;
+  const claimed = profile.coinsClaimed ?? 0;
+  let credited = 0;
+  if (granted > claimed) {
+    credited = granted - claimed;
+    profile.coins += credited;
+    profile.coinsClaimed = granted;
+  }
+  profile.perks = { ...(profile.perks ?? {}), ...(ent.perks ?? {}) };
+  saveProfile(profile);
+  return credited;
+}
+
+export const hasPerk = (profile: Profile, perk: string): boolean => Boolean(profile.perks?.[perk]);
