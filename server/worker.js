@@ -45,6 +45,13 @@ const CATALOGUE = {
 
 const CURRENCY = 'usd';
 
+/**
+ * Managed Payments makes Stripe liable for the tax, so it needs to know what
+ * is being sold. Everything here is an in-game digital item, which falls under
+ * the general electronically-supplied-services code.
+ */
+const TAX_CODE = 'txcd_10000000';
+
 function form(params) {
   return Object.entries(params)
     .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
@@ -339,6 +346,7 @@ export default {
         'line_items[0][price_data][currency]': CURRENCY,
         'line_items[0][price_data][unit_amount]': item.amount,
         'line_items[0][price_data][product_data][name]': item.name,
+        'line_items[0][price_data][product_data][tax_code]': TAX_CODE,
         success_url: `${site}?purchase={CHECKOUT_SESSION_ID}`,
         cancel_url: `${site}?purchase=cancelled`,
         client_reference_id: user.uid,
