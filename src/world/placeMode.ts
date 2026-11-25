@@ -11,7 +11,7 @@ import type { Profile } from '../game/save.js';
 import { World, WorldMode } from './engine.js';
 import { ball, burst, makeMarker, mat, popIn } from './models.js';
 import type { Site, Spot } from './site.js';
-import { Visitors, floatText } from './visitors.js';
+import { Visitors, floatText, type Visitor } from './visitors.js';
 
 /** Something the dog can do right now, shown as a button (E for the first). */
 interface Action {
@@ -101,6 +101,7 @@ export class PlaceMode implements WorldMode {
     this.visitors = new Visitors(world, this.site, {
       open: () => this.data.state(this.deps.profile()).done.includes('counter'),
       hasWorker: () => this.data.life(this.deps.profile()).worker,
+      icon: () => this.data.product.icon,
       sold: (byWorker, at) => this.sold(byWorker, at),
       leftHungry: () => this.say('Oh no, they got tired of waiting! Serve at the counter, or hire a worker.'),
     });
@@ -403,6 +404,20 @@ export class PlaceMode implements WorldMode {
     this.coinsChanged();
   }
 
+  private greet(v: Visitor): void {
+    this.world.dog.face(v.rig.group.position);
+    this.world.jump();
+    const { coins, at } = this.visitors.greet(v);
+    const lines = [
+      `They love what you're doing with ${this.data.name}!`,
+      'They say they’ll be back when it opens!',
+      'A friendly hello — and a little tip for the work.',
+      'They can’t wait to try it!',
+    ];
+    this.say(lines[Math.floor(Math.random() * lines.length)], 3000);
+    this.gain(coins, at, `+${coins} 💛`);
+  }
+
   /** A sale at the counter: the dog's go to you, the worker's to the tip jar. */
   private sold(byWorker: boolean, at: THREE.Vector3): void {
     const life = this.data.life(this.deps.profile());
@@ -504,6 +519,11 @@ export class PlaceMode implements WorldMode {
   private refreshActions(): void {
     const sheetOpen = !this.sheet().hidden;
     const list = sheetOpen || this.busy ? [] : this.actionsFor(this.nearSpot());
+    // Someone dropped by to look around: say hi.
+    if (!sheetOpen && !this.busy && !this.fishing && !this.pinned) {
+      const v = this.visitors.nearSightseer(this.world.dog.group.position);
+      if (v) list.unshift({ label: '👋 Say hi', run: () => this.greet(v) });
+    }
     const keyNow = list.map((a) => `${a.label}|${a.disabled ? 1 : 0}`).join('/');
     this.actions = list;
     if (keyNow === this.actionKey) return;

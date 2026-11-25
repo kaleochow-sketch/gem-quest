@@ -11,7 +11,7 @@ import * as THREE from 'three';
 import type { PlaceData, PlaceState } from '../game/places.js';
 import { World, TAU } from './engine.js';
 import { ball, box, cyl, makeGrass, makePalm, makeRock, mat, shadowed } from './models.js';
-import type { Seat, Site, Spot } from './site.js';
+import type { Ferry, Seat, Site, Spot } from './site.js';
 import type { HouseStyle, MessKind, Theme } from './themes.js';
 
 interface Glow {
@@ -186,12 +186,36 @@ export class RegionSite implements Site {
   walkRoutes(): [number, number][][] {
     return [
       [[-23, 3.4], [-3.4, 3.0]],
-      [[23, 2.0], [4.2, 3.2]],
+      // Round the pond, not through it, and past the tree.
+      [[23, 0.6], [17, 0.2], [9, -0.5], [4.2, 3.2]],
+      // In from behind the building.
+      [[23, -12], [7, -1], [4.2, 3.2]],
     ];
   }
 
-  hasBoats(): boolean {
-    return false;
+  ferry(): Ferry | null {
+    if (this.theme.water === 'lagoon') {
+      // Rowing in from the sea to the end of the jetty.
+      return {
+        kind: 'boat',
+        from: [18, -0.3, 45],
+        dock: [13.1, -0.3, 4.2],
+        land: [JETTY.x1 - 0.3, JETTY.y, 5],
+        walk: [[8.7, 5], [4.2, 3.2]],
+      };
+    }
+    if (this.theme.backdrop === 'sky') {
+      // Drifting down by hot-air balloon to a meadow by the tower.
+      const y = this.terrain(-16.5, 6.5);
+      return {
+        kind: 'balloon',
+        from: [-42, 26, 16],
+        dock: [-16.5, y, 6.5],
+        land: [-15.1, this.terrain(-15.1, 5.4), 5.4],
+        walk: [[-12.8, 3.6], [-3.4, 3.0]],
+      };
+    }
+    return null;
   }
 
   /* ---------------------------------------------------------------- *

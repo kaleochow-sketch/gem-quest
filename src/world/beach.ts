@@ -10,7 +10,7 @@
 import * as THREE from 'three';
 import { CafeState, DECOR, choiceOf } from '../game/cafe.js';
 import { World, TAU } from './engine.js';
-import type { Seat, Site, Spot } from './site.js';
+import type { Ferry, Seat, Site, Spot } from './site.js';
 import { ball, box, cyl, makePalm, makeGrass, makeRock, mat, shadowed } from './models.js';
 
 /** Height of the sand at (x, z): flat beach, sloping into the sea, dunes behind. */
@@ -109,8 +109,15 @@ export class Beach implements Site {
     ];
   }
 
-  hasBoats(): boolean {
-    return this.pierFixed;
+  ferry(): Ferry | null {
+    if (!this.pierFixed) return null;
+    return {
+      kind: 'boat',
+      from: [19, -0.3, 48],
+      dock: [15.1, -0.3, 18.6],
+      land: [15.1, PIER.deck, 18.6],
+      walk: [[13, 18.2], [13, 7], [13, PIER.rampZ - 0.4], [6, 3.6]],
+    };
   }
 
   constructor(world: World) {

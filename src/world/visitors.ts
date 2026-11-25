@@ -1,26 +1,31 @@
 /**
- * Visitors to the café. Once the counter is built, people turn up for
- * onigiri: rowing in to the pier once it is repaired, or strolling along the
- * beach before that. They queue at the counter, pay when served, sit at a
- * table to eat if there is a free stool, and head home. A hired worker
- * stands behind the counter and serves them; otherwise the dog does.
+ * Visitors to a place. Before the shop is built, the odd sightseer wanders
+ * in to look at the work (say hi for a tip). Once it is open, customers turn
+ * up: on foot, or by the place's own ride (a rowboat to the pier, a balloon
+ * to the island). They queue at the counter, pay when served, sit at a table
+ * to eat if there is a free stool, and head home. A hired worker stands
+ * behind the counter and serves them; otherwise the dog does.
  */
 import * as THREE from 'three';
-import { PIER } from './beach.js';
-import type { Site } from './site.js';
+import type { Ferry, Site } from './site.js';
 import { World } from './engine.js';
 import { ThrowerRig, box, cyl, makeMarker, makePerson, mat, shadowed } from './models.js';
 
-type Stage = 'rowing-in' | 'walking-in' | 'queue' | 'to-seat' | 'eating' | 'leaving' | 'rowing-out' | 'gone';
+type Stage = 'rowing-in' | 'walking-in' | 'looking' | 'queue' | 'to-seat' | 'eating' | 'leaving' | 'rowing-out' | 'gone';
 
-interface Visitor {
+export interface Visitor {
   rig: ThrowerRig;
   stage: Stage;
   path: THREE.Vector3[];
   /** The way home, walked in reverse. */
   home: THREE.Vector3[];
   byBoat: boolean;
+  /** Their ride (boat or balloon), waiting while they visit. */
   boat?: THREE.Group;
+  ferry?: Ferry;
+  /** Just here to look around; the shop is not open yet. */
+  sightseer: boolean;
+  greeted: boolean;
   timer: number;
   patience: number;
   bubble?: THREE.Sprite;
@@ -28,8 +33,10 @@ interface Visitor {
 }
 
 export interface VisitorHooks {
-  /** The counter exists, so people come. */
+  /** The counter exists, so customers come (sightseers come anyway). */
   open(): boolean;
+  /** What they order, shown in their bubble. */
+  icon(): string;
   hasWorker(): boolean;
   /** Pays for one onigiri; `byWorker` sales go to the tip jar. */
   sold(byWorker: boolean, at: THREE.Vector3): void;
@@ -103,6 +110,34 @@ function makeVisitorBoat(color: string): { group: THREE.Group; oars: THREE.Objec
   return { group: shadowed(group, true, false), oars };
 }
 
+/** A hot-air balloon with a wicker basket; the basket floor is at y = 0. */
+function makeBalloon(color: string): THREE.Group {
+  const group = new THREE.Group();
+  const basket = box(1.05, 0.85, 1.05, mat('#b5844f', 0.95));
+  basket.position.y = 0.42;
+  const rim = box(1.15, 0.1, 1.15, mat('#8a5e3c', 0.9));
+  rim.position.y = 0.88;
+  group.add(basket, rim);
+  for (const [x, z] of [[-0.5, -0.5], [0.5, -0.5], [-0.5, 0.5], [0.5, 0.5]]) {
+    const rope = cyl(0.015, 0.015, 2.4, mat('#5a4632', 0.9), 4);
+    rope.position.set(x * 1.3, 2.05, z * 1.3);
+    rope.rotation.set(z * 0.28, 0, -x * 0.28);
+    group.add(rope);
+  }
+  const envelope = new THREE.Group();
+  envelope.position.y = 4.4;
+  const stripes = [color, '#fbf7ef'];
+  for (let i = 0; i < 8; i++) {
+    const g = new THREE.SphereGeometry(1.9, 6, 14, (i / 8) * Math.PI * 2, Math.PI / 4);
+    envelope.add(new THREE.Mesh(g, mat(stripes[i % 2], 0.7)));
+  }
+  envelope.scale.set(1, 1.15, 1);
+  const neck = cyl(0.55, 0.9, 0.7, mat(color, 0.7), 12);
+  neck.position.y = 2.25;
+  group.add(envelope, neck);
+  return shadowed(group, true, false);
+}
+
 export class Visitors {
   private list: Visitor[] = [];
   private spawnIn = 4;
@@ -164,7 +199,7 @@ export class Visitors {
     }
   }
 
-  private spawn(): void {
+  private spawn(sightseer: boolean): void {
     const look = makePerson();
     const v: Visitor = {
       rig: look,
@@ -172,32 +207,37 @@ export class Visitors {
       path: [],
       home: [],
       byBoat: false,
+      sightseer,
+      greeted: false,
       timer: 0,
       patience: 32,
     };
-    const pier = this.beach.hasBoats();
-    const boating = this.list.some((x) => x.byBoat && (x.stage === 'rowing-in' || x.stage === 'rowing-out'));
-    if (pier && !boating && Math.random() < 0.6) {
-      // Row in to the end of the pier.
+    const ferry = this.beach.ferry();
+    // One ride at a time, so two never park on the same spot.
+    const riding = this.list.some((x) => x.boat);
+    if (ferry && !riding && Math.random() < 0.6) {
       v.byBoat = true;
       v.stage = 'rowing-in';
+      v.ferry = ferry;
       const colors = ['#ff9a8b', '#74c8ff', '#ffd66b', '#8fe3c0', '#c3a6f5'];
-      const { group, oars } = makeVisitorBoat(colors[Math.floor(Math.random() * colors.length)]);
-      group.userData.oars = oars;
-      group.position.set(16 + Math.random() * 6, -0.3, 48);
-      v.boat = group;
-      look.seated = true;
-      look.group.position.set(0, 0.35, 0);
-      look.group.rotation.y = Math.PI;
+      const color = colors[Math.floor(Math.random() * colors.length)];
+      let group: THREE.Group;
+      if (ferry.kind === 'boat') {
+        const made = makeVisitorBoat(color);
+        group = made.group;
+        group.userData.oars = made.oars;
+        look.seated = true;
+        look.group.position.set(0, 0.35, 0);
+      } else {
+        group = makeBalloon(color);
+        look.group.position.set(0, 0.08, 0);
+      }
+      look.face(new THREE.Vector3(0, 0, -10));
+      group.position.set(ferry.from[0] + (Math.random() - 0.5) * 6, ferry.from[1], ferry.from[2]);
       group.add(look.group);
+      v.boat = group;
       this.root.add(group);
-      v.home = [
-        new THREE.Vector3(15.1, PIER.deck, 18.6),
-        new THREE.Vector3(13, PIER.deck, 18.2),
-        new THREE.Vector3(13, PIER.deck, 7),
-        new THREE.Vector3(13, 0, PIER.rampZ - 0.4),
-        new THREE.Vector3(6, 0, 3.6),
-      ];
+      v.home = [new THREE.Vector3(...ferry.land), ...ferry.walk.map(([x, z]) => new THREE.Vector3(x, 0, z))];
     } else {
       const routes = this.beach.walkRoutes();
       const route = routes[Math.floor(Math.random() * routes.length)];
@@ -213,13 +253,17 @@ export class Visitors {
   update(dt: number, t: number): void {
     this.syncWorker();
     this.worker?.update(dt, t);
+    this.spawnIn -= dt;
+    const active = this.list.filter((v) => v.stage !== 'gone').length;
     if (this.hooks.open()) {
-      this.spawnIn -= dt;
-      const active = this.list.filter((v) => v.stage !== 'gone').length;
       if (this.spawnIn <= 0 && active < 5 && this.waitingCount() < 3) {
-        this.spawn();
+        this.spawn(false);
         this.spawnIn = 9 + Math.random() * 7;
       }
+    } else if (this.spawnIn <= 0 && active < 2) {
+      // Not open yet: now and then someone drops by to see how it's going.
+      this.spawn(true);
+      this.spawnIn = 16 + Math.random() * 12;
     }
 
     for (const v of this.list) this.step(v, dt, t);
@@ -256,31 +300,49 @@ export class Visitors {
     switch (v.stage) {
       case 'rowing-in': {
         const b = v.boat!;
-        const dock = new THREE.Vector3(15.1, -0.3, 18.6);
-        const to = dock.clone().sub(b.position).setY(0);
-        const d = to.length();
-        b.rotation.y = Math.atan2(to.x, to.z) + Math.PI;
-        this.row(b, t, d > 0.2);
-        if (d < 0.2) {
-          // Climb out onto the pier.
+        const f = v.ferry!;
+        if (this.ride(b, f, new THREE.Vector3(...f.dock), dt, t)) {
+          // Climb out onto the pier (or out of the basket).
           b.remove(v.rig.group);
           v.rig.seated = false;
-          v.rig.group.position.set(15.1, PIER.deck, 18.6);
+          v.rig.group.position.set(...f.land);
           this.root.add(v.rig.group);
           v.stage = 'walking-in';
           v.path = v.home.slice(1).map((p) => p.clone());
-        } else {
-          b.position.addScaledVector(to.normalize(), Math.min(d, 3.2 * dt));
         }
-        b.position.y = -0.3 + Math.sin(t * 1.6) * 0.05;
         break;
       }
       case 'walking-in':
         if (this.walk(v, dt)) {
-          v.stage = 'queue';
-          v.timer = 0;
+          if (v.sightseer) {
+            // Find a place to stand and admire the work.
+            v.stage = 'looking';
+            v.timer = 8 + Math.random() * 5;
+            const [qx, qz] = this.beach.queue[Math.floor(Math.random() * this.beach.queue.length)];
+            v.path = [new THREE.Vector3(qx + (Math.random() - 0.5) * 4, 0, qz + 1 + Math.random() * 1.5)];
+          } else {
+            v.stage = 'queue';
+            v.timer = 0;
+          }
         }
         break;
+      case 'looking': {
+        if (!this.walk(v, dt)) break;
+        v.rig.face(new THREE.Vector3(this.beach.workerAt[0], 0, this.beach.workerAt[2] - 2));
+        v.timer -= dt;
+        if (!v.bubble) {
+          const moods = ['👀', '😍', '📸', '✨'];
+          v.bubble = makeMarker(v.greeted ? '💛' : moods[Math.floor(Math.random() * moods.length)], '#ffffff');
+          v.bubble.scale.multiplyScalar(0.7);
+          this.root.add(v.bubble);
+        }
+        v.bubble.position.set(v.rig.group.position.x, v.rig.group.position.y + 2.75 + Math.sin(t * 3) * 0.06, v.rig.group.position.z);
+        if (v.timer <= 0) {
+          this.dropBubble(v);
+          this.goHome(v);
+        }
+        break;
+      }
       case 'queue': {
         const i = this.queueIndex(v);
         const q = this.beach.queue;
@@ -297,7 +359,7 @@ export class Visitors {
         if (i === 0 && v.path.length === 0) {
           v.timer += dt;
           if (!v.bubble) {
-            v.bubble = makeMarker('🍙', '#ffffff');
+            v.bubble = makeMarker(this.hooks.icon(), '#ffffff');
             v.bubble.scale.multiplyScalar(0.8);
             this.root.add(v.bubble);
           }
@@ -331,9 +393,11 @@ export class Visitors {
         if (this.walk(v, dt)) {
           if (v.byBoat && v.boat) {
             this.root.remove(v.rig.group);
-            v.rig.group.position.set(0, 0.35, 0);
+            const inBoat = v.ferry!.kind === 'boat';
+            v.rig.group.position.set(0, inBoat ? 0.35 : 0.08, 0);
             v.rig.group.rotation.y = Math.PI;
-            v.rig.seated = true;
+            v.rig.face(new THREE.Vector3(0, 0, -10));
+            v.rig.seated = inBoat;
             v.boat.add(v.rig.group);
             v.stage = 'rowing-out';
           } else {
@@ -343,15 +407,33 @@ export class Visitors {
         break;
       case 'rowing-out': {
         const b = v.boat!;
-        const away = new THREE.Vector3(b.position.x + 4, 0, 60).sub(b.position).setY(0);
-        b.rotation.y = Math.atan2(away.x, away.z) + Math.PI;
-        this.row(b, t, true);
-        b.position.addScaledVector(away.normalize(), 3.2 * dt);
-        b.position.y = -0.3 + Math.sin(t * 1.6) * 0.05;
-        if (b.position.z > 55) v.stage = 'gone';
+        const f = v.ferry!;
+        if (!b.userData.away) b.userData.away = new THREE.Vector3(f.from[0] + (Math.random() - 0.5) * 8, f.from[1], f.from[2] + 6);
+        if (this.ride(b, f, b.userData.away as THREE.Vector3, dt, t)) v.stage = 'gone';
         break;
       }
     }
+  }
+
+  /** Moves a ride toward `to`; true once it is there. */
+  private ride(b: THREE.Group, f: Ferry, to: THREE.Vector3, dt: number, t: number): boolean {
+    if (f.kind === 'boat') {
+      const d3 = to.clone().sub(b.position).setY(0);
+      const d = d3.length();
+      if (d > 0.2) b.rotation.y = Math.atan2(d3.x, d3.z) + Math.PI;
+      this.row(b, t, d > 0.2);
+      b.position.addScaledVector(d3.normalize(), Math.min(d, 3.2 * dt));
+      b.position.y = to.y + Math.sin(t * 1.6) * 0.05;
+      return d < 0.2;
+    }
+    // A balloon drifts, easing down as it lands and swaying a little.
+    const d3 = to.clone().sub(b.position);
+    const d = d3.length();
+    const speed = Math.min(3, 0.6 + d * 0.25);
+    b.position.addScaledVector(d3.normalize(), Math.min(d, speed * dt));
+    b.rotation.z = Math.sin(t * 0.9) * 0.04 * Math.min(1, d);
+    b.rotation.x = Math.cos(t * 0.7) * 0.03 * Math.min(1, d);
+    return d < 0.05;
   }
 
   private row(boat: THREE.Group, t: number, moving: boolean): void {
@@ -391,11 +473,33 @@ export class Visitors {
     }
   }
 
-  private giveUp(v: Visitor): void {
+  private dropBubble(v: Visitor): void {
     if (v.bubble) {
       this.root.remove(v.bubble);
       v.bubble = undefined;
     }
+  }
+
+  /** A sightseer the dog is next to, who hasn't been greeted yet. */
+  nearSightseer(p: THREE.Vector3, r = 2.2): Visitor | null {
+    return (
+      this.list.find(
+        (v) => v.sightseer && !v.greeted && (v.stage === 'looking' || v.stage === 'walking-in') && v.rig.group.position.distanceTo(p) < r,
+      ) ?? null
+    );
+  }
+
+  /** Say hi: they cheer, maybe tip, and stay a little longer. Returns the tip. */
+  greet(v: Visitor): { coins: number; at: THREE.Vector3 } {
+    v.greeted = true;
+    v.rig.cheer();
+    this.dropBubble(v);
+    if (v.stage === 'looking') v.timer += 4;
+    return { coins: 3 + Math.floor(Math.random() * 6), at: v.rig.group.position.clone().add(new THREE.Vector3(0, 2.4, 0)) };
+  }
+
+  private giveUp(v: Visitor): void {
+    this.dropBubble(v);
     const sad = makeMarker('😞', '#e3eaf2');
     sad.scale.multiplyScalar(0.7);
     sad.position.copy(v.rig.group.position).add(new THREE.Vector3(0, 2.7, 0));
@@ -412,8 +516,6 @@ export class Visitors {
       .slice()
       .reverse()
       .map((p) => p.clone());
-    // Walk from wherever they are; the last point is their arrival spot.
-    if (v.byBoat) v.path.unshift(new THREE.Vector3(6, 0, 3.6));
   }
 
   /** Visitors sit on these, so they should not be counted as free. */

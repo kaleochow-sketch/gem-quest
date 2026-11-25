@@ -51,6 +51,16 @@ export interface Seat {
   facing: number;
 }
 
+/** A ride visitors take in: it travels from `from` to `dock`, they step off at `land` and walk in. */
+export interface Ferry {
+  kind: 'boat' | 'balloon';
+  from: [number, number, number];
+  dock: [number, number, number];
+  land: [number, number, number];
+  /** The walk from `land` to the yard. */
+  walk: [number, number][];
+}
+
 export interface Site extends Place {
   /** The rebuildable contents (buildings, props), for tapping. */
   readonly content: THREE.Group;
@@ -60,8 +70,8 @@ export interface Site extends Place {
   build(state: PlaceState, preview?: { task: string; swatch: string }): void;
   /** Ways visitors walk in: each a list of points from the edge to the yard. */
   walkRoutes(): [number, number][][];
-  /** Whether visitors can row in to a pier. */
-  hasBoats(): boolean;
+  /** How some visitors arrive other than on foot (a rowboat, a balloon), if at all right now. */
+  ferry(): Ferry | null;
   /** Spots in the queue in front of the counter, front first. */
   readonly queue: [number, number][];
   /** Where a hired worker stands, behind the counter. */

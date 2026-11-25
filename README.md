@@ -152,6 +152,13 @@ where there is water; a landmark; a lookout tower, fire pit and bed; and the
 same visitors, stock, worker and tip jar as the café. Sleep is once a real
 day across all places.
 
+**Visitors everywhere.** Before a place's shop is built, sightseers drop by
+to watch the work (walk up and **👋 Say hi** for a small tip). Once it's
+open, customers walk in from three directions, row in to the jetty at the
+Coral Aquarium (and the café pier once it's fixed), and drift down by hot-air
+balloon at the Floating Garden Island. Their order bubble shows the place's
+own product.
+
 **Fun & Games.** Four minigames pay coins and items: the daily Treat Wheel,
 Fetch (timing), Paw-print Memory and Dig for Treasure. Each has one free play
 a day, and every fourth new level cleared earns a bonus round that plays
