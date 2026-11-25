@@ -1,7 +1,7 @@
 {
-  "name": "Gem Quest",
-  "short_name": "Gem Quest",
-  "description": "A match-3 puzzle adventure across 1000 progressively harder levels.",
+  "name": "Matcha",
+  "short_name": "Matcha",
+  "description": "A cosy match-3 puzzle adventure across 1000 levels.",
   "id": "/gem-quest/",
   "start_url": ".",
   "scope": ".",

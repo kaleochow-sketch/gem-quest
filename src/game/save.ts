@@ -59,6 +59,8 @@ export interface Profile {
   build?: Record<string, number>;
   /** Minigame bookkeeping. */
   fun?: FunState;
+  /** 3D places being restored (see cafe.ts). */
+  world?: { cafe?: import('./cafe.js').CafeState };
 }
 
 export type MinigameKind = 'fetch' | 'wheel' | 'memory' | 'dig';

@@ -1117,6 +1117,8 @@ export class Scenery {
       this.raf = requestAnimationFrame(loop);
       const fading = this.fadeFrom !== null;
       if (this.still && !fading) return;
+      // Hidden behind the 3D world: nothing to draw.
+      if (document.body.classList.contains('in-3d')) return;
       if (!fading && now - this.lastDraw < 1000 / this.fps) return;
       this.draw(now);
     };

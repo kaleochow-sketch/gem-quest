@@ -15,7 +15,27 @@ export interface Reward {
   coins: number;
   items: Partial<Record<ItemId, number>>;
   lives: number;
+  /** A rare find that becomes a decoration in the café. */
+  decor?: { id: string; name: string; icon: string };
 }
+
+/** What the 3D world offers; absent where WebGL is unavailable. */
+export interface Play3d {
+  fetch(done: (r: { points: number; catches: number; bullseyes: number }) => void): void;
+  dig(
+    setup: { field: Find3d[]; digs: number },
+    done: (found: Find3d[], bone: boolean) => void,
+  ): void;
+  /** A rare decoration not yet found, if any are left. */
+  rare(): { id: string; name: string; icon: string } | null;
+}
+
+export type Find3d =
+  | { kind: 'coins'; amount: number }
+  | { kind: 'item'; id: string; icon: string; name: string }
+  | { kind: 'rare'; id: string; icon: string; name: string }
+  | { kind: 'bone' }
+  | { kind: 'sand' };
 
 export interface FunDeps {
   profile(): Profile;
@@ -24,6 +44,7 @@ export interface FunDeps {
   dog(px: number): string;
   /** Applies a reward to the profile and refreshes the wallet. */
   grant(reward: Reward): void;
+  play3d?: Play3d;
 }
 
 interface GameInfo {
@@ -35,7 +56,7 @@ interface GameInfo {
 
 export const GAMES: GameInfo[] = [
   { kind: 'wheel', name: 'Treat Wheel', icon: '🎡', blurb: 'One free spin a day for coins, items or a life.' },
-  { kind: 'fetch', name: 'Fetch!', icon: '🎾', blurb: 'Tap when the ball is in the zone. Streaks pay more.' },
+  { kind: 'fetch', name: 'Fetch!', icon: '🎾', blurb: 'Run under the ball, catch it and bring it back. Catch streaks pay more.' },
   { kind: 'memory', name: 'Paw-print Memory', icon: '🐾', blurb: 'Match the pairs before you run out of turns.' },
   { kind: 'dig', name: 'Dig for Treasure', icon: '🦴', blurb: 'Pick spots to dig. Find a bone and the dog stops to chew.' },
 ];
@@ -194,6 +215,12 @@ export class Minigames {
     this.card.dataset.kind = kind;
     const finish = (reward: Reward, title: string) => this.showReward(kind, reward, title, onClose);
     const tag = `<div class="modal-tag">${bonus ? '🎁 Bonus round' : 'Minigame'}</div>`;
+    if (this.deps.play3d && (kind === 'fetch' || kind === 'dig')) {
+      this.overlay.dataset.open = 'false';
+      if (kind === 'fetch') this.playFetch3d(this.deps.play3d, finish);
+      else this.playDig3d(this.deps.play3d, finish);
+      return;
+    }
     switch (kind) {
       case 'fetch':
         this.playFetch(tag, finish);
@@ -230,15 +257,19 @@ export class Minigames {
   private showReward(kind: MinigameKind, reward: Reward, title: string, onClose?: () => void): void {
     this.stop();
     // Never walk away empty-pawed.
-    if (!reward.coins && !reward.lives && !Object.keys(reward.items).length) reward.coins = this.coins(10);
+    if (!reward.coins && !reward.lives && !reward.decor && !Object.keys(reward.items).length) reward.coins = this.coins(10);
     const rows: string[] = [];
     if (reward.coins) rows.push(`<div class="reward"><span class="coin"></span><b>+${reward.coins}</b></div>`);
     if (reward.lives) rows.push(`<div class="reward"><span>❤️</span><b>+${reward.lives} life</b></div>`);
+    if (reward.decor) {
+      rows.push(`<div class="reward reward-rare"><span>${reward.decor.icon}</span><b>${reward.decor.name} · added to the café!</b></div>`);
+    }
     for (const [id, n] of Object.entries(reward.items)) {
       const item = shopItemById(id as ItemId);
       rows.push(`<div class="reward"><span>${item.icon}</span><b>${item.name}${(n ?? 1) > 1 ? ` ×${n}` : ''}</b></div>`);
     }
     audio.sfx('win');
+    this.overlay.dataset.open = 'true';
     this.card.innerHTML = `
       <div class="modal-tag">${gameInfo(kind).name}</div>
       <img class="fun-dog-big" src="${this.deps.dog(96)}" alt="" />
@@ -250,6 +281,47 @@ export class Minigames {
       this.deps.grant(reward);
       audio.sfx('coin');
       this.close(onClose);
+    });
+  }
+
+  /* ---------------------------------------------------------------- *
+   * 3D versions
+   * ---------------------------------------------------------------- */
+
+  private playFetch3d(p: Play3d, finish: (r: Reward, title: string) => void): void {
+    p.fetch((r) => {
+      const reward = empty();
+      reward.coins = this.coins(r.points * 0.15);
+      // Great throws sometimes bring back something special.
+      if ((r.bullseyes > 0 || r.catches > 0) && Math.random() < 0.3) {
+        const rare = p.rare();
+        if (rare) reward.decor = rare;
+      }
+      if (r.catches >= 4) reward.items.rocketPair = 1;
+      const title = r.points >= 900 ? 'Super fetch!' : r.points >= 450 ? 'Good dog!' : 'Nice try!';
+      finish(reward, `${title} ${r.points} points`);
+    });
+  }
+
+  private playDig3d(p: Play3d, finish: (r: Reward, title: string) => void): void {
+    const items: ItemId[] = ['hammer', 'shuffle', 'extraMoves', 'freeswap'];
+    const field: Find3d[] = [];
+    for (let i = 0; i < 7; i++) field.push({ kind: 'coins', amount: this.coins(10 + Math.floor(Math.random() * 7) * 5) });
+    const itemId = items[Math.floor(Math.random() * items.length)];
+    const item = shopItemById(itemId);
+    field.push({ kind: 'item', id: itemId, icon: item.icon, name: item.name });
+    const rare = Math.random() < 0.4 ? p.rare() : null;
+    if (rare) field.push({ kind: 'rare', ...rare });
+    field.push({ kind: 'bone' }, { kind: 'bone' });
+    while (field.length < 25) field.push({ kind: 'sand' });
+    p.dig({ field: shuffled(field), digs: 6 }, (found, bone) => {
+      const reward = empty();
+      for (const f of found) {
+        if (f.kind === 'coins') reward.coins += f.amount;
+        else if (f.kind === 'item') reward.items[f.id as ItemId] = (reward.items[f.id as ItemId] ?? 0) + 1;
+        else if (f.kind === 'rare') reward.decor = { id: f.id, name: f.name, icon: f.icon };
+      }
+      finish(reward, bone ? 'Chomp chomp!' : 'Digging done!');
     });
   }
 

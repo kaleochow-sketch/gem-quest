@@ -6,8 +6,10 @@
  */
 import { audio } from '../audio/audio.js';
 import {
+  HAS_3D,
   PROJECTS,
   SLOTS,
+  projectSize,
   activeProject,
   buildNext,
   isComplete,
@@ -29,6 +31,8 @@ export interface BuildDeps {
   refreshWallet(): void;
   /** Sends the player off to earn coins. */
   play(): void;
+  /** Opens a project's 3D place, when it has one and the device can show it. */
+  open3d?(index: number): boolean;
 }
 
 export class BuildScreen {
@@ -44,9 +48,10 @@ export class BuildScreen {
     document.body.appendChild(this.cutscene);
   }
 
-  /** Opens on the project most worth working on. */
+  /** Opens on the project most worth working on; 3D places open directly. */
   enter(): void {
     this.index = activeProject(this.deps.profile());
+    if (HAS_3D.has(this.index) && this.deps.open3d?.(this.index)) return;
     this.render();
   }
 
@@ -72,7 +77,7 @@ export class BuildScreen {
       chip.dataset.locked = String(i >= open);
       const built = stepsBuilt(profile, i);
       chip.innerHTML = `<strong>${i >= open ? '🔒 ' : isComplete(profile, i) ? '✅ ' : ''}${p.name}</strong><small>${
-        i >= open ? 'Finish the last one or reach the next region' : `${built}/${p.steps.length} built`
+        i >= open ? 'Finish the last one or reach the next region' : `${built}/${projectSize(i)} ${HAS_3D.has(i) ? 'jobs · 3D' : 'built'}`
       }</small>`;
       chip.addEventListener('click', () => {
         if (i >= open) {
@@ -87,6 +92,12 @@ export class BuildScreen {
     requestAnimationFrame(() =>
       tabs.querySelector<HTMLElement>('[data-on="true"]')?.scrollIntoView({ inline: 'center', block: 'nearest' }),
     );
+
+    // A 3D place gets a doorway instead of the diorama.
+    if (HAS_3D.has(this.index) && this.deps.open3d) {
+      this.render3dCard(profile);
+      return;
+    }
 
     // The diorama.
     const built = stepsBuilt(profile, this.index);
@@ -155,6 +166,25 @@ export class BuildScreen {
       this.index++;
       this.render();
     });
+  }
+
+  private render3dCard(profile: Profile): void {
+    const project = PROJECTS[this.index];
+    const done = stepsBuilt(profile, this.index);
+    const size = projectSize(this.index);
+    document.getElementById('diorama')!.innerHTML = `
+      <div class="enter3d">
+        <div class="enter3d-art">🏝️<img src="${this.deps.dog(96)}" alt="" /></div>
+        <strong>${project.name}</strong>
+        <p>Walk around the beach in 3D, fix up the café job by job, and paint it your way.</p>
+        <button class="btn btn-primary" id="enter-3d" type="button">Walk in →</button>
+      </div>`;
+    const pct = Math.round((done / size) * 100);
+    document.getElementById('build-panel')!.innerHTML = `
+      <div class="build-head"><strong>${project.name}</strong><small>${done} / ${size} jobs</small></div>
+      <div class="build-bar"><i style="width:${pct}%"></i></div>
+      <p class="panel-blurb">${project.blurb} It starts run-down: clean it up, repair it, paint it and open for business.</p>`;
+    document.getElementById('enter-3d')!.addEventListener('click', () => this.deps.open3d?.(this.index));
   }
 
   private build(): void {
@@ -251,6 +281,12 @@ export class BuildScreen {
       onOk();
     });
     this.cutscene.querySelector('#cut-cancel')?.addEventListener('click', close);
+  }
+
+  /** The party for a project finished somewhere else (a 3D place). */
+  celebrateProject(index: number): void {
+    this.index = index;
+    this.celebrate(null);
   }
 
   /** Grand opening: confetti, the reward, and the next project. */

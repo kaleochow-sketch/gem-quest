@@ -150,7 +150,7 @@ function main(): void {
   const rng = new Rng(0xc0ffee);
 
   console.log(
-    `Gem Quest balance run — ${trials} trials/level at skill ${skill}, every ${step}th level\n`,
+    `Matcha balance run — ${trials} trials/level at skill ${skill}, every ${step}th level\n`,
   );
   if (verbose) console.log('lvl  diff  moves  goal                              win%   ★   score   done%');
 

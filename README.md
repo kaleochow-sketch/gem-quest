@@ -1,4 +1,6 @@
-# Gem Quest
+# Matcha
+
+*Match* is the game; the *a* makes it Matcha.
 
 A match-3 puzzle game for mobile — 1000 progressively harder levels across ten
 regions, consumable boosters, and a twelve-branch permanent upgrade tree. Built as a self-contained HTML5 + Canvas
@@ -26,7 +28,7 @@ Swipe a piece into a neighbour, or tap one then tap a neighbour. Match three or
 more of a kind.
 
 The seven pieces are a **Japanese flag**, a **white dog**, a **tennis ball**, an
-**onigiri**, a **sewing machine**, a **ball of yarn** and a **paw print**. Three
+**onigiri**, a **sewing machine**, a **bowl of matcha** and a **paw print**. Three
 of those are mostly white, so each sits on its own strongly coloured tile — the
 artwork gives identity, the tile keeps them separable at a glance.
 
@@ -80,6 +82,32 @@ dog has something to say about it), and finishing a project throws a party
 and pays a bonus. The next project opens when the current one is finished or
 when the player reaches the next region, whichever is first
 (`src/game/build.ts`, `src/ui/buildscreen.ts`).
+
+**The 3D café.** Sunrise Shore's project is a real 3D place built with
+Three.js (`src/world/`). Walk the dog around the beach (tap to walk, drag to
+look, pinch to zoom) through a full day: sunrise, noon, sunset and a starry
+night where the lanterns, string lights and bonfire glow. Wind gusts sway the
+palms, grass, lanterns and hammock. The café starts run-down and is restored
+through thirty jobs in four stages (clear the beach, fix the shack, open the
+café, beach life), priced so finishing takes about the coins from the
+region's hundred levels. Paint jobs offer colour choices with a live preview,
+and anything painted can be tapped later to repaint it for free. Rare finds
+from Dig and Fetch become decorations on the beach. Dig is played in 3D on
+the café beach; the Treat Wheel and Memory stay 2D.
+
+**Moving in 3D.** WASD or the arrow keys run, Space jumps. On touch, a finger
+dragged on the left half of the screen is a joystick (the right half looks
+around), or tap the sand to walk there. Paw prints are left in the sand and
+fade back over a few seconds.
+
+**Fetch** is played on its own big beach (lighthouse, beach huts, kites).
+A friend throws the ball; run the dog under it using the keys or the
+joystick (anywhere on screen), catch it, and bring it back. A ring shows
+where it will land. Points are paid on delivery: 100 for an air catch, 150
+for a leaping catch, 40 for picking it up off the sand, multiplied by your
+catch streak (up to ×3), plus a quick-return bonus. 75 seconds, and the
+throws get longer as the round goes on. The other nine
+regions still use the 2D diorama until their 3D places are built.
 
 **Fun & Games.** Four minigames pay coins and items: the daily Treat Wheel,
 Fetch (timing), Paw-print Memory and Dig for Treasure. Each has one free play

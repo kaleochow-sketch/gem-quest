@@ -46,7 +46,9 @@ import { LevelSession } from '../game/session.js';
 import { Scenery } from '../render/scenery.js';
 import { BuildScreen } from './buildscreen.js';
 import { BONUS_ROTATION, Minigames, Reward } from './minigames.js';
-import { PROJECTS, projectsUnlocked, stepCost, stepsBuilt } from '../game/build.js';
+import { PROJECTS, projectReward, projectsUnlocked, stepCost, stepsBuilt } from '../game/build.js';
+import { cafeState, grantDecor, openTasks, rollDecor, taskCost } from '../game/cafe.js';
+import { closeWorld, has3d, openCafe, playDig, playFetch } from '../world/index.js';
 import {
   Entitlements,
   StoreItem,
@@ -153,6 +155,8 @@ export class App {
   private mapRegion = 0;
   private scenery: Scenery | null = null;
   private buildScreen!: BuildScreen;
+  /** WebGL is there, so the 3D places and minigames can run. */
+  private readonly can3d = has3d();
   private minigames!: Minigames;
   private chosenBoosters: BoosterId[] = [];
   private armedPowerup: PowerupId | null = null;
@@ -216,6 +220,11 @@ export class App {
       setRegion: (r) => this.tuneMusic(r),
       refreshWallet: () => this.refreshWallet(),
       play: () => this.openPreLevel(Math.min(this.profile.unlocked, TOTAL_LEVELS)),
+      open3d: (index) => {
+        if (index !== 0 || !this.can3d) return false;
+        this.openCafe3d();
+        return true;
+      },
     });
     this.minigames = new Minigames({
       profile: () => this.profile,
@@ -223,6 +232,16 @@ export class App {
       piece: (c, px) => this.renderer.pieceArt(c, px),
       dog: (px) => this.renderer.dogArt(px),
       grant: (reward) => this.grantReward(reward),
+      play3d: this.can3d
+        ? {
+            fetch: (done) => playFetch(this.profile, done),
+            dig: (setup, done) => playDig(this.profile, setup, done),
+            rare: () => {
+              const d = rollDecor(this.profile);
+              return d ? { id: d.id, name: d.name, icon: d.icon } : null;
+            },
+          }
+        : undefined,
     });
 
     this.bindChrome();
@@ -328,7 +347,7 @@ export class App {
 
     window.addEventListener('appinstalled', () => {
       bar.dataset.open = 'false';
-      this.toast('Installed — look for Gem Quest on your home screen');
+      this.toast('Installed — look for Matcha on your home screen');
     });
 
     $('install-close').addEventListener('click', () => {
@@ -363,7 +382,7 @@ export class App {
   private showIosInstall(): void {
     this.openModal(`
       <h2>Add to Home Screen</h2>
-      <p class="lead">Gem Quest runs as a full-screen app, and works with no connection.</p>
+      <p class="lead">Matcha runs as a full-screen app, and works with no connection.</p>
       <ol class="steps">
         <li>Tap the <strong>Share</strong> button in Safari&nbsp;<span class="ios-share">􀈂</span> (the square with an arrow).</li>
         <li>Scroll and choose <strong>Add to Home Screen</strong>.</li>
@@ -378,7 +397,7 @@ export class App {
   private showShare(): void {
     const url = shareUrl();
     this.openModal(`
-      <h2>Share Gem Quest</h2>
+      <h2>Share Matcha</h2>
       <p class="lead">Anyone can play straight from the link — no account, no install needed.</p>
       <button class="qr-frame" id="qr-tap" type="button" title="Copy link">${qrSvg(url, {
         light: '#ffffff',
@@ -416,7 +435,7 @@ export class App {
     $('share-native').addEventListener('click', async () => {
       if (navigator.share) {
         try {
-          await navigator.share({ title: 'Gem Quest', text: 'Play Gem Quest', url });
+          await navigator.share({ title: 'Matcha', text: 'Play Matcha', url });
         } catch {
           /* the user dismissed the sheet */
         }
@@ -491,10 +510,41 @@ export class App {
     let affordable = false;
     const open = projectsUnlocked(this.profile);
     for (let i = 0; i < open && !affordable; i++) {
+      if (i === 0) {
+        affordable = openTasks(cafeState(this.profile)).some((t) => this.profile.coins >= taskCost(t.id));
+        continue;
+      }
       const built = stepsBuilt(this.profile, i);
       if (built < PROJECTS[i].steps.length && this.profile.coins >= stepCost(i, built)) affordable = true;
     }
     $('build-badge').hidden = !affordable;
+  }
+
+  /** Walks into the 3D café. */
+  private openCafe3d(): void {
+    this.stopLoop();
+    openCafe(this.profile, {
+      profile: () => this.profile,
+      save: () => saveProfile(this.profile),
+      refreshWallet: () => this.refreshWallet(),
+      dog: (px) => this.renderer.dogArt(px),
+      exit: () => this.show('map'),
+      play: () => {
+        this.show('map');
+        this.openPreLevel(Math.min(this.profile.unlocked, TOTAL_LEVELS));
+      },
+      finished: () => {
+        // The café's own grand opening: pay the project bonus, then party.
+        const reward = projectReward(0);
+        this.profile.coins += reward.coins;
+        this.profile.inventory[reward.item] = (this.profile.inventory[reward.item] ?? 0) + 1;
+        saveProfile(this.profile);
+        this.refreshWallet();
+        closeWorld();
+        this.show('build');
+        this.buildScreen.celebrateProject(0);
+      },
+    });
   }
 
   /** Applies a minigame reward. */
@@ -506,6 +556,7 @@ export class App {
     if (reward.lives) {
       this.profile.lives = Math.min(livesCap(this.profile), this.profile.lives + reward.lives);
     }
+    if (reward.decor) grantDecor(this.profile, reward.decor.id);
     saveProfile(this.profile);
     this.refreshWallet();
   }
@@ -1081,7 +1132,7 @@ export class App {
       if (navigator.share) {
         try {
           await navigator.share({
-            title: 'Gem Quest',
+            title: 'Matcha',
             text: `I scored ${best.score.toLocaleString()} on level ${best.level}. Beat it.`,
             url,
           });

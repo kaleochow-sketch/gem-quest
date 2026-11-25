@@ -19,7 +19,7 @@ export const GEM_NAMES = [
   'tennis balls',
   'onigiri',
   'sewing machines',
-  'yarn balls',
+  'matcha bowls',
   'paws',
 ];
 
@@ -520,7 +520,7 @@ export class GameRenderer {
         this.paintSewingMachine(g, u);
         break;
       case 5:
-        this.paintYarn(g, u);
+        this.paintMatcha(g, u);
         break;
       default:
         this.paintPaw(g, u);
@@ -823,43 +823,99 @@ export class GameRenderer {
     g.restore();
   }
 
-  private paintYarn(g: CanvasRenderingContext2D, u: number): void {
-    const ball = g.createRadialGradient(-u * 0.26, -u * 0.3, u * 0.08, 0, 0, u * 0.9);
-    ball.addColorStop(0, '#fff1e0');
-    ball.addColorStop(0.55, '#ffd0a8');
-    ball.addColorStop(1, '#d98a5a');
-    g.fillStyle = ball;
-    g.beginPath();
-    g.arc(0, 0, u * 0.85, 0, Math.PI * 2);
-    g.fill();
+  /**
+   * A bowl of matcha: a cream chawan seen from a little above, frothy green
+   * tea with a heart in the foam, and a bamboo whisk resting against it.
+   */
+  private paintMatcha(g: CanvasRenderingContext2D, u: number): void {
+    const cy = u * 0.12;
+    const rx = u * 0.86;
+    const ry = u * 0.3;
 
     g.save();
+    g.shadowColor = 'rgba(0,0,0,0.28)';
+    g.shadowBlur = u * 0.14;
+    g.shadowOffsetY = u * 0.07;
+    // Bowl body: the lower half of a rounded cup.
+    const body = g.createLinearGradient(-rx, cy, rx, cy + u * 0.7);
+    body.addColorStop(0, '#fffaf0');
+    body.addColorStop(0.6, '#f1e3c8');
+    body.addColorStop(1, '#d9c09a');
+    g.fillStyle = body;
     g.beginPath();
-    g.arc(0, 0, u * 0.85, 0, Math.PI * 2);
-    g.clip();
-    g.strokeStyle = 'rgba(150,80,40,0.55)';
-    g.lineWidth = Math.max(1, u * 0.09);
-    for (let i = -2; i <= 2; i++) {
-      g.beginPath();
-      g.ellipse(0, 0, u * 0.85, u * 0.34, i * 0.6, 0, Math.PI * 2);
-      g.stroke();
-    }
+    g.ellipse(0, cy, rx, ry, 0, Math.PI, 0, true);
+    g.bezierCurveTo(rx, cy + u * 0.55, u * 0.45, cy + u * 0.78, 0, cy + u * 0.78);
+    g.bezierCurveTo(-u * 0.45, cy + u * 0.78, -rx, cy + u * 0.55, -rx, cy);
+    g.fill();
     g.restore();
 
-    // Loose thread tail.
-    g.strokeStyle = '#ffd0a8';
-    g.lineWidth = Math.max(1, u * 0.09);
-    g.lineCap = 'round';
+    // A glaze band, as on a hand-made tea bowl.
+    g.strokeStyle = 'rgba(120, 150, 90, 0.55)';
+    g.lineWidth = Math.max(1, u * 0.07);
     g.beginPath();
-    g.moveTo(u * 0.7, u * 0.5);
-    g.quadraticCurveTo(u * 1.1, u * 0.75, u * 0.82, u * 0.98);
+    g.ellipse(0, cy + u * 0.28, rx * 0.93, ry * 0.9, 0, 0.15, Math.PI - 0.15);
     g.stroke();
 
-    g.strokeStyle = 'rgba(120,60,25,0.5)';
-    g.lineWidth = Math.max(1, u * 0.06);
+    // Rim.
+    g.fillStyle = '#fffdf7';
     g.beginPath();
-    g.arc(0, 0, u * 0.85, 0, Math.PI * 2);
+    g.ellipse(0, cy, rx, ry, 0, 0, Math.PI * 2);
+    g.fill();
+
+    // The tea, frothed pale at the centre.
+    const tea = g.createRadialGradient(-u * 0.12, cy - u * 0.05, u * 0.05, 0, cy, rx * 0.86);
+    tea.addColorStop(0, '#d4f2a4');
+    tea.addColorStop(0.55, '#9fd46a');
+    tea.addColorStop(1, '#5f9e3a');
+    g.fillStyle = tea;
+    g.beginPath();
+    g.ellipse(0, cy, rx * 0.84, ry * 0.8, 0, 0, Math.PI * 2);
+    g.fill();
+
+    // Foam bubbles.
+    g.fillStyle = 'rgba(255,255,240,0.55)';
+    for (const [bx, by, br] of [[-0.42, 0.02, 0.06], [0.38, -0.04, 0.05], [0.5, 0.08, 0.035], [-0.3, -0.1, 0.035]]) {
+      g.beginPath();
+      g.arc(bx * u, cy + by * u, br * u, 0, Math.PI * 2);
+      g.fill();
+    }
+
+    // A little heart drawn in the foam.
+    g.fillStyle = '#f2ffd9';
+    const hs = u * 0.13;
+    g.beginPath();
+    g.moveTo(0, cy + hs * 0.9);
+    g.bezierCurveTo(-hs * 1.6, cy - hs * 0.2, -hs * 0.7, cy - hs * 1.3, 0, cy - hs * 0.4);
+    g.bezierCurveTo(hs * 0.7, cy - hs * 1.3, hs * 1.6, cy - hs * 0.2, 0, cy + hs * 0.9);
+    g.fill();
+
+    g.strokeStyle = 'rgba(150, 120, 80, 0.5)';
+    g.lineWidth = Math.max(1, u * 0.045);
+    g.beginPath();
+    g.ellipse(0, cy, rx, ry, 0, 0, Math.PI * 2);
     g.stroke();
+
+    // Bamboo whisk leaning on the rim.
+    g.save();
+    g.translate(u * 0.62, cy - u * 0.38);
+    g.rotate(0.55);
+    g.fillStyle = '#e9c98b';
+    g.strokeStyle = 'rgba(140, 100, 40, 0.6)';
+    g.lineWidth = Math.max(1, u * 0.03);
+    g.beginPath();
+    g.roundRect(-u * 0.07, -u * 0.55, u * 0.14, u * 0.4, u * 0.05);
+    g.fill();
+    g.stroke();
+    g.beginPath();
+    g.moveTo(-u * 0.09, -u * 0.16);
+    g.quadraticCurveTo(-u * 0.2, u * 0.05, -u * 0.06, u * 0.16);
+    g.lineTo(u * 0.06, u * 0.16);
+    g.quadraticCurveTo(u * 0.2, u * 0.05, u * 0.09, -u * 0.16);
+    g.closePath();
+    g.fillStyle = '#f3dcaa';
+    g.fill();
+    g.stroke();
+    g.restore();
   }
 
   private paintPaw(g: CanvasRenderingContext2D, u: number): void {
