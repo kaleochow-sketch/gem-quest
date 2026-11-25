@@ -95,6 +95,28 @@ and anything painted can be tapped later to repaint it for free. Rare finds
 from Dig and Fetch become decorations on the beach. Dig is played in 3D on
 the café beach; the Treat Wheel and Memory stay 2D.
 
+**Living in the café.** Walk up to things and an action button appears
+(E on a keyboard):
+
+- **Onigiri counter** — visitors stroll along the beach, or row in to the
+  pier once it is repaired, queue for onigiri and pay when served. They sit
+  at the tables to eat if a stool is free. Serving uses stock, so cook more
+  at the **rice cooker** (12 a batch). **Hire a worker** (2,500 coins) to
+  serve for you; their sales, and a coin every 20 seconds while you are
+  away (up to six hours), collect in the tip jar.
+- **Hammock** — sleep until morning, once per real day. Waking up refreshes
+  the daily games, the Treat Wheel, coconuts and fishing.
+- **Pier** — fish three times a day: wait for the bite, then pull. Fish pay
+  coins; now and then a bottle holds a Shuffle, or the line brings up one of
+  the rare decorations.
+- **Palms** (a coconut each per day), **bonfire** (a marshmallow a day),
+  **boat** (hop in), **loungers** (sunbathe, moving the day along),
+  **lifeguard tower** (climb up for the view), **tables** (sit), and the
+  **flower beds** (have a sniff).
+
+The dog walks around buildings and furniture, onto the deck, and along the
+pier once it is mended.
+
 **Moving in 3D.** WASD or the arrow keys run, Space jumps. On touch, a finger
 dragged on the left half of the screen is a joystick (the right half looks
 around), or tap the sand to walk there. Paw prints are left in the sand and

@@ -24,6 +24,31 @@ export function sandY(x: number, z: number): number {
 /** The shack's footprint, which the dog walks around. */
 export const SHACK = { x0: -3.6, x1: 3.6, z0: -9.2, z1: -4.1 };
 
+/** The pier: a walkway from a ramp on the sand out over the water. */
+export const PIER = { x0: 12.1, x1: 13.9, rampZ: 4.3, z0: 6.5, z1: 19.2, deck: 0.66 };
+
+/** Somewhere the dog can do something (sleep, serve, fish…). */
+export interface Spot {
+  kind: 'hammock' | 'counter' | 'kitchen' | 'bonfire' | 'palm' | 'pier' | 'boat' | 'lounger' | 'tower' | 'table' | 'flowers';
+  x: number;
+  z: number;
+  /** How close the dog must be. */
+  r: number;
+  /** Distinguishes several of a kind (each palm can be shaken once a day). */
+  key: string;
+}
+
+/** The beach's own palms: x, z, height, lean. */
+const PALMS: [number, number, number, number][] = [
+  [-16, -6, 6.5, 0.25],
+  [-13.5, -2, 5.6, -0.15],
+  [-10.5, -1.6, 6, 0.2],
+  [16, -5, 6.8, -0.3],
+  [19, 1, 5.4, 0.35],
+  [-19, 2, 5.8, -0.25],
+  [10, -11, 6.2, 0.1],
+];
+
 const TOP_TEXT_CACHE = new Map<string, THREE.CanvasTexture>();
 
 /** A painted wooden sign with lettering. */
@@ -70,6 +95,13 @@ export class Beach implements Place {
   /** Objects a player can tap to repaint, keyed by task id. */
   readonly paintable = new Map<string, THREE.Object3D>();
   private deckBuilt = false;
+  private pierFixed = false;
+  /** Round obstacles the dog walks around (trunks, tables, the boat…). */
+  colliders: { x: number; z: number; r: number }[] = [];
+  /** Things to interact with, rebuilt with the café. */
+  spots: Spot[] = [];
+  /** The lounger and table seats, for the dog and for visitors. */
+  seats: { x: number; z: number; y: number; facing: number }[] = [];
 
   constructor(world: World) {
     this.world = world;
@@ -78,16 +110,42 @@ export class Beach implements Place {
     this.anim.add((dt, t) => this.animate(dt, t));
   }
 
-  /** Where the dog stands: on the sand, or up on the deck once it exists. */
+  /** Where the dog stands: sand, the deck, or the pier once repaired. */
   groundAt(x: number, z: number): number {
     if (this.deckBuilt && x > -3.8 && x < 3.8 && z > -4.3 && z < -1.2) return 0.36;
+    if (this.onPier(x, z)) {
+      if (z < PIER.z0) {
+        const start = sandY(x, PIER.rampZ);
+        return start + (PIER.deck - start) * ((z - PIER.rampZ) / (PIER.z0 - PIER.rampZ));
+      }
+      return PIER.deck;
+    }
     return sandY(x, z);
   }
 
-  /** Keeps a point on the beach and out of the shack. */
+  private onPier(x: number, z: number): boolean {
+    return this.pierFixed && x > PIER.x0 - 0.05 && x < PIER.x1 + 0.05 && z > PIER.rampZ && z < PIER.z1 + 0.05;
+  }
+
+  /** Keeps a point on the beach (or pier), out of the shack and furniture. */
   clamp(p: THREE.Vector3): void {
     p.x = THREE.MathUtils.clamp(p.x, -22, 22);
-    p.z = THREE.MathUtils.clamp(p.z, -12, 8.5);
+    // Out over the water only along a repaired pier.
+    if (this.pierFixed && p.z > 8.5 && p.x > PIER.x0 - 0.6 && p.x < PIER.x1 + 0.6) {
+      p.x = THREE.MathUtils.clamp(p.x, PIER.x0, PIER.x1);
+      p.z = Math.min(p.z, PIER.z1);
+    } else {
+      p.z = THREE.MathUtils.clamp(p.z, -12, 8.5);
+    }
+    for (const c of this.colliders) {
+      const dx = p.x - c.x;
+      const dz = p.z - c.z;
+      const d = Math.hypot(dx, dz);
+      if (d < c.r && d > 0.0001) {
+        p.x = c.x + (dx / d) * c.r;
+        p.z = c.z + (dz / d) * c.r;
+      }
+    }
     if (p.x > SHACK.x0 && p.x < SHACK.x1 && p.z > SHACK.z0 && p.z < SHACK.z1) {
       const out = [p.x - SHACK.x0, SHACK.x1 - p.x, p.z - SHACK.z0, SHACK.z1 - p.z];
       const m = Math.min(...out);
@@ -199,15 +257,7 @@ export class Beach implements Place {
     }
 
     // Palms that frame the beach (the café adds more later).
-    for (const [x, z, h, lean] of [
-      [-16, -6, 6.5, 0.25],
-      [-13.5, -2, 5.6, -0.15],
-      [-10.5, -1.6, 6, 0.2],
-      [16, -5, 6.8, -0.3],
-      [19, 1, 5.4, 0.35],
-      [-19, 2, 5.8, -0.25],
-      [10, -11, 6.2, 0.1],
-    ] as const) {
+    for (const [x, z, h, lean] of PALMS) {
       const palm = makePalm(h, lean, w.windUniforms, this.anim);
       palm.position.set(x, sandY(x, z), z);
       palm.rotation.y = Math.random() * TAU;
@@ -313,6 +363,15 @@ export class Beach implements Place {
     this.glows = [];
     this.flames = [];
     this.paintable.clear();
+    this.colliders = [];
+    this.spots = [];
+    this.seats = [];
+    this.pierFixed = state.done.includes('pier');
+    // The beach's own palms are solid, and can be shaken for coconuts.
+    PALMS.forEach(([x, z], i) => {
+      this.colliders.push({ x, z, r: 0.55 });
+      this.spots.push({ kind: 'palm', x, z, r: 1.7, key: `palm-${i}` });
+    });
 
     const has = (id: string) => state.done.includes(id);
     const pick = (id: string, fallback: string): string => {
@@ -382,47 +441,69 @@ export class Beach implements Place {
       }
     }
 
-    // Walls: gappy grey boards until repaired, then solid and paintable.
+    // Walls are solid panels with real openings for the windows and door, and
+    // boards laid over them. (They used to be separate planks with gaps
+    // between them, which read as see-through slits.) Run-down walls keep
+    // their missing and crooked boards, but over a dark backing.
     const fixed = has('walls');
     const paintColor = has('paint') || preview?.task === 'paint' ? pick('paint', '#b98758') : '#b98758';
     const wallMat = fixed ? mat(paintColor, 0.8) : mat('#9a958b', 1);
-    const plank = 0.46;
+    const backMat = fixed ? wallMat : mat('#5f5a53', 1);
+    const trim = mat(fixed ? '#8a5e3c' : '#7d776d', 0.9);
+    const T = 0.14;
     const wallGroup = new THREE.Group();
-    const addWall = (len: number, along: 'x' | 'z', ox: number, oz: number, skip?: (u: number) => boolean) => {
-      const n = Math.round(len / plank);
+    const top = 0.3 + H;
+    /** A solid rectangle of wall in the wall's own plane. */
+    const panel = (along: 'x' | 'z', ox: number, oz: number, u0: number, u1: number, y0: number, y1: number) => {
+      const len = u1 - u0;
+      const b = box(along === 'x' ? len : T, y1 - y0, along === 'z' ? len : T, backMat);
+      const mid = (u0 + u1) / 2;
+      b.position.set(along === 'x' ? ox + mid : ox, (y0 + y1) / 2, along === 'z' ? oz + mid : oz);
+      wallGroup.add(b);
+    };
+    /** Boards over a stretch of wall, skipping openings. */
+    const boards = (along: 'x' | 'z', ox: number, oz: number, len: number, outward: number, skip?: (u: number) => boolean) => {
+      const n = Math.round(len / 0.46);
       for (let i = 0; i < n; i++) {
         const u = -len / 2 + (i + 0.5) * (len / n);
         if (skip && skip(u)) continue;
-        // Rotten boards are missing or crooked.
         if (!fixed && (i * 7 + Math.round(ox * 3 + oz * 5)) % 5 === 0) continue;
         const h = fixed ? H : H - ((i * 13) % 4) * 0.18;
-        const b = box(along === 'x' ? len / n - 0.03 : 0.12, h, along === 'z' ? len / n - 0.03 : 0.12, wallMat);
-        b.position.set(along === 'x' ? ox + u : ox, 0.3 + h / 2, along === 'z' ? oz + u : oz);
+        const w = fixed ? 0.08 : len / n - 0.02;
+        const b = box(along === 'x' ? w : 0.05, h, along === 'z' ? w : 0.05, fixed ? trim : wallMat);
+        const off = (T / 2 + 0.025) * outward;
+        b.position.set(along === 'x' ? ox + u : ox + off, 0.3 + h / 2, along === 'z' ? oz + u : oz + off);
+        if (fixed) b.position[along] += len / n / 2 - 0.04;
         if (!fixed && i % 4 === 1) b.rotation[along === 'x' ? 'z' : 'x'] = 0.08;
         wallGroup.add(b);
       }
     };
-    addWall(W, 'x', 0, -D / 2);
-    addWall(D, 'z', -W / 2, 0);
-    addWall(D, 'z', W / 2, 0);
-    // Front: windows either side, a doorway in the middle.
-    addWall(W, 'x', 0, D / 2, (u) => Math.abs(u) < 0.8 || Math.abs(Math.abs(u) - 2.1) < 0.75);
-    // Wall above and below the windows.
+    // Back and sides: solid.
+    panel('x', 0, -D / 2, -W / 2, W / 2, 0.3, top);
+    panel('z', -W / 2, 0, -D / 2, D / 2, 0.3, top);
+    panel('z', W / 2, 0, -D / 2, D / 2, 0.3, top);
+    boards('x', 0, -D / 2, W, -1);
+    boards('z', -W / 2, 0, D, -1);
+    boards('z', W / 2, 0, D, 1);
+    // Front: windows at ±2.1 (1.5 wide, sill 1.4, head 2.4) and a 1.6-wide door.
     for (const s of [-1, 1]) {
-      const below = box(1.5, 1.0, 0.12, wallMat);
-      below.position.set(s * 2.1, 0.8, D / 2);
-      const above = box(1.5, 0.5, 0.12, wallMat);
-      above.position.set(s * 2.1, 2.65, D / 2);
-      wallGroup.add(below, above);
+      panel('x', 0, D / 2, s > 0 ? 2.85 : -W / 2, s > 0 ? W / 2 : -2.85, 0.3, top);
+      panel('x', 0, D / 2, s > 0 ? 0.8 : -1.35, s > 0 ? 1.35 : -0.8, 0.3, top);
+      panel('x', 0, D / 2, s > 0 ? 1.35 : -2.85, s > 0 ? 2.85 : -1.35, 0.3, 1.4);
+      panel('x', 0, D / 2, s > 0 ? 1.35 : -2.85, s > 0 ? 2.85 : -1.35, 2.4, top);
     }
-    const lintel = box(1.7, 0.45, 0.12, wallMat);
-    lintel.position.set(0, 2.68, D / 2);
-    wallGroup.add(lintel);
-    // Corner posts.
+    panel('x', 0, D / 2, -0.8, 0.8, 2.4, top);
+    boards('x', 0, D / 2, W, 1, (u) => Math.abs(u) < 0.8 || Math.abs(Math.abs(u) - 2.1) < 0.75);
+    // Corner posts and a sill along the base.
     for (const [x, z] of [[-W / 2, -D / 2], [W / 2, -D / 2], [-W / 2, D / 2], [W / 2, D / 2]]) {
-      const post = box(0.22, H + 0.3, 0.22, mat(fixed ? '#8a5e3c' : '#7d776d', 0.9));
+      const post = box(0.24, H + 0.3, 0.24, trim);
       post.position.set(x, 0.3 + (H + 0.3) / 2, z);
       wallGroup.add(post);
+    }
+    for (const [w, d, x, z] of [[W + 0.2, 0.22, 0, D / 2], [W + 0.2, 0.22, 0, -D / 2], [0.22, D, -W / 2, 0], [0.22, D, W / 2, 0]]) {
+      const plate = box(w, 0.14, d, trim);
+      plate.position.set(x, top + 0.07, z);
+      wallGroup.add(plate);
     }
     shack.add(wallGroup);
     if (fixed) tag(wallGroup, 'paint');
@@ -497,6 +578,22 @@ export class Beach implements Place {
       cap.rotation.z = Math.PI / 2;
       cap.position.set(0, roofY + 1.35, 0);
       shack.add(cap);
+      // Gable ends: close the triangles under the roof at both sides.
+      const gable = new THREE.Shape();
+      gable.moveTo(-D / 2 - 0.05, 0);
+      gable.lineTo(D / 2 + 0.05, 0);
+      gable.lineTo(0, 1.32);
+      gable.closePath();
+      for (const sx of [-1, 1]) {
+        const tri = new THREE.Mesh(new THREE.ExtrudeGeometry(gable, { depth: T, bevelEnabled: false }), wallMat);
+        tri.rotation.y = Math.PI / 2;
+        tri.position.set(sx * (W / 2) - T / 2, roofY + 0.07, 0);
+        shack.add(tri);
+        const vent = new THREE.Mesh(new THREE.CircleGeometry(0.22, 18), mat('#2f3a56', 0.6));
+        vent.rotation.y = sx * Math.PI / 2;
+        vent.position.set(sx * (W / 2 + 0.08), roofY + 0.55, 0);
+        shack.add(vent);
+      }
     } else {
       for (let i = 0; i < 6; i++) {
         const stick = cyl(0.05, 0.05, D + 0.6, mat('#7d6a55', 1), 6);
@@ -683,6 +780,8 @@ export class Beach implements Place {
         counter.add(rice);
       }
       add(tag(counter, 'counter'), 0, -2.0, has('deck') ? 0.36 : sandY(0, -2));
+      for (const cx of [-1.2, 0, 1.2]) this.colliders.push({ x: cx, z: -2.0, r: 0.55 });
+      this.spots.push({ kind: 'counter', x: 0, z: -1.9, r: 2.6, key: 'counter' });
     }
     if (has('kitchen')) {
       const k = new THREE.Group();
@@ -715,6 +814,8 @@ export class Beach implements Place {
       };
       this.anim.add(fn);
       add(k, 2.7, -3.4, has('deck') ? 0.36 : undefined);
+      this.colliders.push({ x: 2.7, z: -3.4, r: 0.75 });
+      this.spots.push({ kind: 'kitchen', x: 2.7, z: -3.4, r: 1.9, key: 'kitchen' });
     }
     if (has('tables')) {
       const color = pick('tables', '#8fe3c0');
@@ -734,6 +835,12 @@ export class Beach implements Place {
           set.add(stool, sleg);
         }
         add(tag(set, 'tables'), x, z);
+        this.colliders.push({ x, z, r: 0.75 });
+        this.spots.push({ kind: 'table', x, z, r: 2.1, key: `table-${x}` });
+        for (let i = 0; i < 3; i++) {
+          const a = (i / 3) * TAU + 0.4;
+          this.seats.push({ x: x + Math.cos(a) * 1.05, z: z + Math.sin(a) * 1.05, y: sandY(x, z) + 0.55, facing: Math.atan2(-Math.cos(a), -Math.sin(a)) });
+        }
       }
     }
     if (has('parasols')) {
@@ -788,12 +895,15 @@ export class Beach implements Place {
           bed.add(stem, bloom);
         }
         add(tag(bed, 'flowers'), s * 4.8, -3.6);
+        this.spots.push({ kind: 'flowers', x: s * 4.8, z: -3.6, r: 1.7, key: `flowers-${s}` });
       }
     }
     if (has('palms')) {
       for (const [x, z, h, lean] of [[-9, -4.5, 5.2, 0.12], [8.5, -6, 5.8, -0.18], [-6.5, -10, 6.2, 0.05]] as const) {
         const palm = makePalm(h, lean, this.world.windUniforms, this.anim);
         add(palm, x, z);
+        this.colliders.push({ x, z, r: 0.5 });
+        this.spots.push({ kind: 'palm', x, z, r: 1.7, key: `palm-new-${x}` });
       }
     } else {
       // A dead palm stump where the new palms will go.
@@ -832,6 +942,11 @@ export class Beach implements Place {
       holder.add(boat);
       holder.rotation.y = 0.5;
       add(holder, 9, 5.6);
+      // Solid: the dog walks around it (or hops in, once it is restored).
+      const ax = Math.sin(0.5);
+      const az = Math.cos(0.5);
+      for (const k of [-1.15, 0, 1.15]) this.colliders.push({ x: 9 + ax * k, z: 5.6 + az * k, r: k ? 0.8 : 1.0 });
+      if (has('boat')) this.spots.push({ kind: 'boat', x: 9, z: 5.6, r: 2.8, key: 'boat' });
     }
     // The pier: missing planks and leaning posts, or solid with rails.
     {
@@ -857,6 +972,16 @@ export class Beach implements Place {
           }
         }
       }
+      if (fixed) {
+        // A ramp up from the sand, so the dog can walk out along it.
+        const run = PIER.z0 - PIER.rampZ;
+        const rise = PIER.deck - sandY(13, PIER.rampZ);
+        const ramp = box(2.2, 0.1, Math.hypot(run, rise), mat('#c98b52', 0.9));
+        ramp.rotation.x = -Math.atan2(rise, run);
+        ramp.position.set(0, (PIER.deck + sandY(13, PIER.rampZ)) / 2 - 0.06, -run / 2);
+        pier.add(ramp);
+        this.spots.push({ kind: 'pier', x: 13, z: 18.4, r: 1.8, key: 'pier' });
+      }
       add(pier, 13, 6.5, 0);
     }
     if (has('loungers')) {
@@ -878,6 +1003,8 @@ export class Beach implements Place {
         l.add(bed, back, towel);
         l.rotation.y = Math.PI + 0.25;
         add(tag(l, 'loungers'), x, z);
+        this.colliders.push({ x, z: z - 0.5, r: 0.6 }, { x, z: z + 0.5, r: 0.6 });
+        this.spots.push({ kind: 'lounger', x, z, r: 1.8, key: `lounger-${x}` });
       }
     }
     if (has('tower')) {
@@ -898,6 +1025,8 @@ export class Beach implements Place {
       ring.position.set(0, 3.0, 0.77);
       t.add(deck, hut, roof, ring);
       add(t, -10.5, 6.4);
+      this.colliders.push({ x: -10.5, z: 6.4, r: 1.05 });
+      this.spots.push({ kind: 'tower', x: -10.5, z: 6.4, r: 2.3, key: 'tower' });
     }
     if (has('bonfire')) {
       const f = new THREE.Group();
@@ -925,27 +1054,78 @@ export class Beach implements Place {
         this.glow(m, 1.4, i === 0 ? light : undefined, 1.0, true);
       }
       add(f, -7, 6);
+      this.colliders.push({ x: -7, z: 6, r: 0.95 });
+      this.spots.push({ kind: 'bonfire', x: -7, z: 6, r: 2.3, key: 'bonfire' });
     }
     if (has('hammock')) {
-      const color = pick('hammock', '#ff9a8b');
+      // A fabric hammock that sags under its own weight, with spreader bars,
+      // ropes and two A-frame posts. Stripes in the chosen colour.
+      const color = new THREE.Color(pick('hammock', '#ff9a8b'));
+      const white = new THREE.Color('#fbf7ef');
       const h = new THREE.Group();
-      const curve = new THREE.CatmullRomCurve3([
-        new THREE.Vector3(-1.4, 1.6, 0),
-        new THREE.Vector3(0, 0.75, 0),
-        new THREE.Vector3(1.4, 1.6, 0),
-      ]);
-      const cloth = new THREE.Mesh(new THREE.TubeGeometry(curve, 20, 0.35, 8), mat(color, 0.9));
-      cloth.scale.z = 1.6;
-      cloth.scale.y = 0.9;
-      h.add(cloth);
-      for (const s of [-1, 1]) {
-        const post = cyl(0.1, 0.12, 2.2, mat('#8a5e3c', 0.9), 8);
-        post.position.set(s * 1.55, 1.1, 0);
-        h.add(post);
+      const L = 2.6;
+      const Wd = 0.95;
+      const hang = 1.25;
+      const sag = 0.5;
+      const geo = new THREE.PlaneGeometry(L, Wd, 24, 6);
+      geo.rotateX(-Math.PI / 2);
+      const p = geo.attributes.position as THREE.BufferAttribute;
+      const cols: number[] = [];
+      for (let i = 0; i < p.count; i++) {
+        const x = p.getX(i);
+        const z = p.getZ(i);
+        const u = x / (L / 2);
+        // Catenary-ish sag along, and a gentle cradle across.
+        p.setY(i, hang - sag * (1 - u * u) + (z / (Wd / 2)) ** 2 * 0.14 * (1 - u * u));
+        const stripe = Math.floor((z + Wd / 2) / (Wd / 6)) % 2 === 0;
+        const c = stripe ? color : white;
+        cols.push(c.r, c.g, c.b);
       }
+      geo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+      geo.computeVertexNormals();
+      const bed = new THREE.Group();
+      const cloth = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, side: THREE.DoubleSide }));
+      bed.add(cloth);
+      const wood = mat('#8a5e3c', 0.85);
+      for (const sx of [-1, 1]) {
+        const bar = cyl(0.04, 0.04, Wd + 0.1, wood, 6);
+        bar.rotation.x = Math.PI / 2;
+        bar.position.set(sx * (L / 2), hang, 0);
+        bed.add(bar);
+        // Ropes fan from the bar to a ring on the post.
+        const ring = new THREE.Vector3(sx * (L / 2 + 0.6), hang + 0.35, 0);
+        for (const rz of [-Wd / 2, 0, Wd / 2]) {
+          const from = new THREE.Vector3(sx * (L / 2), hang, rz);
+          const len = from.distanceTo(ring);
+          const rope = cyl(0.012, 0.012, len, mat('#efe3c4', 0.9), 4);
+          rope.position.copy(from).lerp(ring, 0.5);
+          rope.lookAt(ring);
+          rope.rotateX(Math.PI / 2);
+          bed.add(rope);
+        }
+        // An A-frame post at each end.
+        for (const lz of [-0.35, 0.35]) {
+          const leg = cyl(0.07, 0.09, 1.9, wood, 8);
+          leg.position.set(sx * (L / 2 + 0.75), 0.9, lz);
+          leg.rotation.x = lz > 0 ? -0.2 : 0.2;
+          leg.rotation.z = sx * 0.12;
+          h.add(leg);
+        }
+      }
+      h.add(bed);
       h.rotation.y = 0.2;
       add(tag(h, 'hammock'), -12, -4.4);
-      this.anim.add(this.swing(cloth, 0.5));
+      this.colliders.push({ x: -12 - 2.05 * Math.cos(0.2), z: -4.4 + 2.05 * Math.sin(0.2), r: 0.5 });
+      this.colliders.push({ x: -12 + 2.05 * Math.cos(0.2), z: -4.4 - 2.05 * Math.sin(0.2), r: 0.5 });
+      this.spots.push({ kind: 'hammock', x: -12, z: -3.2, r: 2.0, key: 'hammock' });
+      const sway = (_dt: number, t: number) => {
+        if (!bed.parent) {
+          this.anim.delete(sway);
+          return;
+        }
+        bed.rotation.x = Math.sin(t * 1.2) * 0.06 * (0.4 + this.world.windUniforms.uWind.value);
+      };
+      this.anim.add(sway);
     }
     if (has('lights')) {
       const bulbs = new THREE.MeshStandardMaterial({ color: '#fff3c4', emissive: new THREE.Color('#ffd36b'), emissiveIntensity: 0, roughness: 0.3 });

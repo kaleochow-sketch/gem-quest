@@ -110,6 +110,8 @@ export interface DogRig {
   readonly hop: number;
   /** Called on each footfall while moving, with the paw's side. */
   onStep?: (side: number) => void;
+  /** A resting pose held while standing still (cleared by moving). */
+  pose: 'sit' | 'lie' | null;
   update(dt: number, t: number): void;
 }
 
@@ -216,6 +218,7 @@ export function makeDog(): DogRig {
   const rig: DogRig = {
     group,
     speed: 4,
+    pose: null,
     get moving() {
       return target !== null;
     },
@@ -271,6 +274,7 @@ export function makeDog(): DogRig {
           body.scale.y = 0.72;
         }
       }
+      if (steerDir || target) rig.pose = null;
       if (steerDir) {
         const want = Math.atan2(steerDir.x, steerDir.z);
         let delta = want - heading;
@@ -325,6 +329,18 @@ export function makeDog(): DogRig {
         legs[0].rotation.x = Math.sin(t * 22) * 0.9 - 0.4;
         legs[1].rotation.x = Math.sin(t * 22 + Math.PI) * 0.9 - 0.4;
         tailPivot.rotation.y = Math.sin(t * 20) * 0.5;
+      } else if (rig.pose) {
+        // Sitting: rump down, front legs straight. Lying: flat, legs out.
+        const sit = rig.pose === 'sit';
+        const k = Math.min(1, dt * 8);
+        bodyPivot.rotation.x += ((sit ? -0.45 : 0) - bodyPivot.rotation.x) * k;
+        bodyPivot.position.y += ((sit ? -0.12 : -0.3) - bodyPivot.position.y) * k;
+        legs[0].rotation.x += ((sit ? 0.45 : -1.3) - legs[0].rotation.x) * k;
+        legs[1].rotation.x += ((sit ? 0.45 : -1.3) - legs[1].rotation.x) * k;
+        legs[2].rotation.x += ((sit ? -1.2 : 1.3) - legs[2].rotation.x) * k;
+        legs[3].rotation.x += ((sit ? -1.2 : 1.3) - legs[3].rotation.x) * k;
+        headPivot.rotation.x = sit ? 0.3 + Math.sin(t * 1.3) * 0.05 : 0.15 + Math.sin(t * 0.9) * 0.03;
+        tailPivot.rotation.y = Math.sin(t * (sit ? 7 : 2)) * 0.4;
       } else {
         for (const l of legs) l.rotation.x *= 0.8;
         bodyPivot.position.y *= 0.8;
@@ -680,6 +696,10 @@ export class Footprints {
 
 export interface ThrowerRig {
   group: THREE.Group;
+  /** Legs swing while walking. */
+  walking: boolean;
+  /** Seated (on a boat or a stool). */
+  seated: boolean;
   /** World position of the throwing hand. */
   hand(): THREE.Vector3;
   /** Plays a wind-up and throw; calls `release` at the moment of letting go. */
@@ -691,13 +711,32 @@ export interface ThrowerRig {
   update(dt: number, t: number): void;
 }
 
+export interface PersonLook {
+  skin: string;
+  top: string;
+  bottom: string;
+  hat: string | null;
+  band: string;
+}
+
+const SKINS = ['#f2c9a8', '#d9a27c', '#b97f57', '#8d5a3b', '#e8b896'];
+const TOPS = ['#5fdbab', '#74c8ff', '#ffd66b', '#ff9a8b', '#c3a6f5', '#ffffff', '#3fa7a0', '#ffb36b'];
+const BOTTOMS = ['#3d5a99', '#2f3a56', '#c98b52', '#6b7790', '#3fa7a0'];
+const HATS = ['#f6d98b', '#ffffff', '#ff6b6b', null, '#74c8ff', null];
+
+/** A random but pleasant outfit, for beach visitors. */
+export function randomLook(): PersonLook {
+  const pick = <T>(a: T[]): T => a[Math.floor(Math.random() * a.length)];
+  return { skin: pick(SKINS), top: pick(TOPS), bottom: pick(BOTTOMS), hat: pick(HATS), band: pick(TOPS) };
+}
+
 /** A cheerful beach-goer in a sun hat, built from simple shapes. */
-export function makeThrower(): ThrowerRig {
-  const skin = mat('#d9a27c', 0.8);
-  const tee = mat('#5fdbab', 0.8);
+export function makeThrower(look: PersonLook = { skin: '#d9a27c', top: '#5fdbab', bottom: '#3d5a99', hat: '#f6d98b', band: '#ff6b6b' }): ThrowerRig {
+  const skin = mat(look.skin, 0.8);
+  const tee = mat(look.top, 0.8);
   const stripe = mat('#ffffff', 0.8);
-  const shorts = mat('#3d5a99', 0.8);
-  const hatMat = mat('#f6d98b', 0.9);
+  const shorts = mat(look.bottom, 0.8);
+  const hatMat = mat(look.hat ?? '#f6d98b', 0.9);
   const dark = mat('#2a2230', 0.4);
 
   const group = new THREE.Group();
@@ -746,13 +785,21 @@ export function makeThrower(): ThrowerRig {
   smile.rotation.z = Math.PI;
   smile.position.set(0, -0.06, 0.25);
   head.add(smile);
-  const brim = cyl(0.5, 0.5, 0.04, hatMat, 24);
-  brim.position.y = 0.17;
-  const crown = cyl(0.24, 0.27, 0.22, hatMat, 18);
-  crown.position.y = 0.28;
-  const ribbon = cyl(0.272, 0.272, 0.06, mat('#ff6b6b', 0.6), 18);
-  ribbon.position.y = 0.2;
-  head.add(brim, crown, ribbon);
+  if (look.hat) {
+    const brim = cyl(0.5, 0.5, 0.04, hatMat, 24);
+    brim.position.y = 0.17;
+    const crown = cyl(0.24, 0.27, 0.22, hatMat, 18);
+    crown.position.y = 0.28;
+    const ribbon = cyl(0.272, 0.272, 0.06, mat(look.band, 0.6), 18);
+    ribbon.position.y = 0.2;
+    head.add(brim, crown, ribbon);
+  } else {
+    // Hair instead of a hat.
+    const hair = ball(0.285, mat(['#2a2230', '#6b4a2b', '#c98b52', '#e8c15a'][Math.floor(Math.random() * 4)], 0.9), 16);
+    hair.scale.set(1, 0.75, 1);
+    hair.position.set(0, 0.1, -0.03);
+    head.add(hair);
+  }
   bodyPivot.add(head);
   // Arms pivot at the shoulder.
   const arms: THREE.Group[] = [];
@@ -779,6 +826,8 @@ export function makeThrower(): ThrowerRig {
 
   const rig: ThrowerRig = {
     group,
+    walking: false,
+    seated: false,
     hand() {
       const p = new THREE.Vector3(0, -0.66, 0);
       throwArm.localToWorld(p);
@@ -838,8 +887,23 @@ export function makeThrower(): ThrowerRig {
         head.rotation.y = Math.sin(t * 0.8) * 0.2;
         bodyPivot.position.y = Math.sin(t * 2) * 0.01;
       }
-      for (const l of legs) l.rotation.x = 0;
+      if (rig.seated) {
+        for (const l of legs) l.rotation.x = -1.45;
+        bodyPivot.position.y = -0.42;
+      } else if (rig.walking) {
+        const swing = Math.sin(t * 9) * 0.55;
+        legs[0].rotation.x = swing;
+        legs[1].rotation.x = -swing;
+        arms[0].rotation.x = -swing * 0.6;
+        if (action === 'idle') throwArm.rotation.x = swing * 0.6;
+        bodyPivot.position.y = Math.abs(Math.sin(t * 9)) * 0.04;
+      } else {
+        for (const l of legs) l.rotation.x = 0;
+      }
     },
   };
   return rig;
 }
+
+/** A visitor: same build as the thrower, in their own outfit. */
+export const makePerson = (look: PersonLook = randomLook()): ThrowerRig => makeThrower(look);

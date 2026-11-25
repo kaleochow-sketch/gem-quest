@@ -10,7 +10,7 @@
  * Costs are tuned so finishing takes roughly the coins from the hundred
  * levels of Sunrise Shore, with upgrades and boosters still affordable.
  */
-import type { Profile } from './save.js';
+import { Profile, today } from './save.js';
 
 export type TaskKind = 'clean' | 'repair' | 'paint' | 'build';
 
@@ -121,6 +121,73 @@ export interface CafeState {
   done: string[];
   choice: Record<string, string>;
   decor: string[];
+  life?: CafeLife;
+}
+
+/** The café as a running business, once it has a counter. */
+export interface CafeLife {
+  /** Onigiri ready to sell. */
+  stock: number;
+  /** A worker has been hired to run the counter. */
+  worker: boolean;
+  /** Coins the worker has earned, waiting in the tip jar. */
+  bank: number;
+  /** When the bank was last topped up (epoch ms). */
+  tick: number;
+  /** The day the per-day counters below belong to. */
+  day: string;
+  /** Uses today, by spot (palms shaken, casts fished, marshmallows…). */
+  used: Record<string, number>;
+  /** The real day the player last slept in the hammock. */
+  slept: string;
+  /** Onigiri sold, ever. */
+  sold: number;
+}
+
+export const ONIGIRI_PRICE = 14;
+export const COOK_BATCH = 12;
+export const STOCK_MAX = 36;
+export const WORKER_COST = 2500;
+/** The worker earns a coin this often, while you are away too. */
+export const WORKER_MS_PER_COIN = 20_000;
+/** …up to this much, so the tip jar wants emptying now and then. */
+export const BANK_CAP_MS = 6 * 60 * 60 * 1000;
+
+export function cafeLife(profile: Profile): CafeLife {
+  const state = cafeState(profile);
+  const life = (state.life = state.life ?? { stock: 6, worker: false, bank: 0, tick: Date.now(), day: today(), used: {}, slept: '', sold: 0 });
+  life.used = life.used ?? {};
+  if (life.day !== today()) {
+    life.day = today();
+    life.used = {};
+  }
+  // The worker keeps earning while you are away, up to the cap.
+  const now = Date.now();
+  if (life.worker) {
+    const span = Math.min(now - life.tick, BANK_CAP_MS);
+    const coins = Math.floor(span / WORKER_MS_PER_COIN);
+    if (coins > 0) {
+      life.bank = Math.min(life.bank + coins, Math.floor(BANK_CAP_MS / WORKER_MS_PER_COIN));
+      life.tick = now - ((now - life.tick) % WORKER_MS_PER_COIN);
+    }
+    if (now - life.tick > BANK_CAP_MS) life.tick = now;
+  } else {
+    life.tick = now;
+  }
+  return life;
+}
+
+/** Uses one of a spot's daily allowance; false when it is used up. */
+export function useDaily(profile: Profile, key: string, limit: number): boolean {
+  const life = cafeLife(profile);
+  const n = life.used[key] ?? 0;
+  if (n >= limit) return false;
+  life.used[key] = n + 1;
+  return true;
+}
+
+export function dailyLeft(profile: Profile, key: string, limit: number): number {
+  return Math.max(0, limit - (cafeLife(profile).used[key] ?? 0));
 }
 
 export function cafeState(profile: Profile): CafeState {
