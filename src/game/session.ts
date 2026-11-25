@@ -63,12 +63,15 @@ export class LevelSession {
     if (options.startingSpecials?.length) {
       grantStartingSpecials(this.board, this.rng, options.startingSpecials);
     }
-    if (options.purge) this.purgeColor();
 
+    // Baselines are taken before the Purge booster fires, so the jelly and
+    // crates it clears count toward the goals instead of silently shrinking
+    // what is left to clear below the target (which made the level unwinnable).
     this.collectedByColor = new Array(def.colorCount).fill(0);
     this.initialBlockers = this.board.blockersRemaining();
     this.initialJelly = this.board.jellyRemaining();
     this.progress = def.objectives.map((o) => ({ ...o, current: 0, done: false }));
+    if (options.purge) this.purgeColor();
     this.refreshProgress();
   }
 
@@ -133,7 +136,7 @@ export class LevelSession {
         if (gem && gem.kind === GemKind.Normal && gem.color === best) seeds.push({ r, c });
       }
     }
-    if (seeds.length) this.board.resolve(this.context, seeds, []);
+    if (seeds.length) this.ingest(this.board.resolve(this.context, seeds, []));
   }
 
   hint(): { a: Pos; b: Pos } | null {

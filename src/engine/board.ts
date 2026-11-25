@@ -350,7 +350,7 @@ export class Board {
       const seeds = this.comboSeeds(a, b);
       this.rawSwap(a, b);
       const steps: Step[] = [{ type: 'swap', a, b, valid: true }];
-      steps.push(...this.resolve(ctx, seeds, [a, b]));
+      steps.push(...this.resolve(ctx, seeds, [a, b], this.comboSpent(a, b)));
       return { valid: true, steps };
     }
 
@@ -374,7 +374,10 @@ export class Board {
     if (this.isComboSwap(a, b)) {
       const seeds = this.comboSeeds(a, b);
       this.rawSwap(a, b);
-      return [{ type: 'swap', a, b, valid: true } as Step, ...this.resolve(ctx, seeds, [a, b])];
+      return [
+        { type: 'swap', a, b, valid: true } as Step,
+        ...this.resolve(ctx, seeds, [a, b], this.comboSpent(a, b)),
+      ];
     }
     this.rawSwap(a, b);
     return [{ type: 'swap', a, b, valid: true } as Step, ...this.resolve(ctx, null, [a, b])];
@@ -395,6 +398,17 @@ export class Board {
     if (!cell || cell.hole || (!cell.gem && !cell.blocker)) return [];
     if (cell.locked) cell.locked = false;
     return this.resolve(ctx, [p], []);
+  }
+
+  /**
+   * After a combo swap, the specials whose effect the combo already replaces.
+   * They still show as detonations, but must not fire their own blast on top:
+   * otherwise a colour bomb swapped onto a plain gem also wipes out the board's
+   * most common colour, and two rockets clear an extra line beside the cross.
+   */
+  private comboSpent(a: Pos, b: Pos): Pos[] {
+    const rainbows = [a, b].filter((p) => this.gemAt(p.r, p.c)?.special === Special.Rainbow);
+    return rainbows.length ? rainbows : [a, b];
   }
 
   /** Cells a special-on-special swap should destroy. */
@@ -473,7 +487,12 @@ export class Board {
    * Runs matches, gravity and cascades until the board is stable,
    * reshuffling if the result has no legal move left.
    */
-  resolve(ctx: ResolveContext, initialSeeds: Pos[] | null, origins: Pos[] = []): Step[] {
+  resolve(
+    ctx: ResolveContext,
+    initialSeeds: Pos[] | null,
+    origins: Pos[] = [],
+    spent: Pos[] = [],
+  ): Step[] {
     const steps: Step[] = [];
     let cascade = 1;
     let seeds = initialSeeds;
@@ -481,7 +500,7 @@ export class Board {
     for (let guard = 0; guard < 200; guard++) {
       let step: ClearStep | null;
       if (seeds) {
-        step = this.clearCells(seeds, [], cascade, ctx);
+        step = this.clearCells(seeds, [], cascade, ctx, spent);
         seeds = null;
       } else {
         const groups = this.findMatchGroups();
@@ -569,8 +588,10 @@ export class Board {
     created: { pos: Pos; gem: Gem }[],
     cascade: number,
     ctx: ResolveContext,
+    spent: Pos[] = [],
   ): ClearStep | null {
     const protectedCells = new Set(created.map((c) => this.idx(c.pos.r, c.pos.c)));
+    const spentCells = new Set(spent.map((p) => this.idx(p.r, p.c)));
     const clearSet = new Set<number>();
     const detonated = new Set<number>();
     const detonations: { pos: Pos; special: Special; color: number }[] = [];
@@ -608,7 +629,7 @@ export class Board {
       if (gem.special !== Special.None && !detonated.has(key)) {
         detonated.add(key);
         detonations.push({ pos: p, special: gem.special, color: gem.color });
-        const area = this.blastArea(p, gem);
+        const area = spentCells.has(key) ? [] : this.blastArea(p, gem);
         for (const t of area) enqueue(t);
         const bonus = ctx.blastRadiusBonus ?? 0;
         if (bonus > 0) {
@@ -764,8 +785,10 @@ export class Board {
           const cell = this.at(r, c)!;
           if (cell.hole || cell.blocker || cell.gem) continue;
 
+          // A chained gem is pinned to its cell: it neither falls out of the
+          // chain nor lets the gems above it through, just like a crate.
           const above = this.at(r - 1, c);
-          if (above && !above.hole && above.gem && !above.blocker) {
+          if (above && !above.hole && above.gem && !above.blocker && !above.locked) {
             cell.gem = above.gem;
             above.gem = null;
             movedThisPass = true;
@@ -773,11 +796,11 @@ export class Board {
           }
 
           // Straight path is a hole, a blocker or off-board — slide in diagonally.
-          if (!above || above.hole || above.blocker) {
+          if (!above || above.hole || above.blocker || above.locked) {
             const order = (r + c) % 2 === 0 ? [-1, 1] : [1, -1];
             for (const dc of order) {
               const src = this.at(r - 1, c + dc);
-              if (!src || src.hole || src.blocker || !src.gem) continue;
+              if (!src || src.hole || src.blocker || src.locked || !src.gem) continue;
               // Only slide if it cannot simply fall straight down.
               const under = this.at(r, c + dc);
               if (under && !under.hole && !under.blocker && !under.gem) continue;

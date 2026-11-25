@@ -451,7 +451,9 @@ export function makeLevel(id: number): LevelDef {
     jellySingle = Math.round(lerp(3, 12, difficulty));
   }
   if (id >= 40 && rng.chance(0.45)) {
-    locks = Math.round(lerp(3, 14, difficulty));
+    // Chained gems are pinned in place and wall off the cells below them, so
+    // each one weighs more than a gem that merely refuses to swap.
+    locks = Math.round(lerp(3, 11, difficulty));
   }
   if (id >= FUSE_UNLOCK && rng.chance(lerp(0.08, 0.3, difficulty))) {
     fuses = Math.max(1, Math.round(lerp(1, 4, difficulty)));
@@ -482,7 +484,9 @@ export function makeLevel(id: number): LevelDef {
   }
   locks = Math.min(locks, Math.max(0, cells - crates - stones - 6));
 
-  moves = Math.max(11, moves);
+  // Goals were sized against the full budget above; squeezing the budget
+  // afterwards is what makes levels harder without shrinking the goals too.
+  moves = Math.max(11, Math.round(moves * moveSqueeze(id)));
   fuses = Math.min(fuses, Math.max(0, Math.floor(cells / 12)));
   // A fuse must be tight enough to force action but long enough to be solvable.
   const fuseTimer = fuses ? Math.max(8, Math.round(moves * lerp(1.05, 0.8, difficulty))) : 0;
@@ -575,6 +579,21 @@ const MILESTONES: Record<number, Partial<LevelDef>> = {
   },
 };
 
+/**
+ * Global difficulty knob: the share of the generated move budget a level
+ * actually gets. Below 1, goals stay the same size but fewer moves are given
+ * to reach them. The tutorial stretch is left alone and the squeeze eases in.
+ */
+const MOVE_SQUEEZE = Number(
+  (typeof process !== 'undefined' && process.env?.MOVE_SQUEEZE) || 0.88,
+);
+
+function moveSqueeze(id: number): number {
+  if (id <= 15) return 1;
+  if (id >= 40) return MOVE_SQUEEZE;
+  return lerp(1, MOVE_SQUEEZE, (id - 15) / 25);
+}
+
 let cache: LevelDef[] | null = null;
 
 /** All levels, generated once and memoised. */
@@ -586,6 +605,9 @@ export function allLevels(): LevelDef[] {
     const override = MILESTONES[id];
     if (override) {
       Object.assign(level, override);
+      // Hand-tuned bosses set their goals against these moves, so they get
+      // the same squeeze as generated levels.
+      if (override.moves) level.moves = Math.max(11, Math.round(override.moves * moveSqueeze(id)));
       level.starScores = starThresholds(level.moves, level.objectives);
     }
     cache.push(level);

@@ -43,6 +43,10 @@ import {
   totalXp,
 } from '../game/leaderboard.js';
 import { LevelSession } from '../game/session.js';
+import { Scenery } from '../render/scenery.js';
+import { BuildScreen } from './buildscreen.js';
+import { BONUS_ROTATION, Minigames, Reward } from './minigames.js';
+import { PROJECTS, projectsUnlocked, stepCost, stepsBuilt } from '../game/build.js';
 import {
   Entitlements,
   StoreItem,
@@ -68,7 +72,6 @@ import {
   extraMovesFrom,
   fuseBonus,
   lifeRefundChance,
-  maxLives,
   powerupRefundChance,
   starlightSpecials,
 } from '../game/upgrades.js';
@@ -81,6 +84,7 @@ import {
   loadProfile,
   msToNextLife,
   recordResult,
+  livesCap,
   refillLives,
   hasSeen,
   markSeen,
@@ -128,7 +132,7 @@ export function shareUrl(): string {
 /** Replaced with the content hash at build time; 'dev' when unstamped. */
 export const BUILD_ID = '__BUILD__';
 
-type ScreenId = 'map' | 'shop' | 'game' | 'ranks';
+type ScreenId = 'map' | 'shop' | 'game' | 'ranks' | 'build' | 'fun';
 type ShopTab = 'boosters' | 'powerups' | 'upgrades' | 'store' | 'dev';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -147,6 +151,9 @@ export class App {
   private shopTab: ShopTab = 'boosters';
   private levelId = 1;
   private mapRegion = 0;
+  private scenery: Scenery | null = null;
+  private buildScreen!: BuildScreen;
+  private minigames!: Minigames;
   private chosenBoosters: BoosterId[] = [];
   private armedPowerup: PowerupId | null = null;
   private freeSwapFirst: Pos | null = null;
@@ -183,9 +190,16 @@ export class App {
     this.levelId = Math.min(this.profile.unlocked, TOTAL_LEVELS);
     this.mapRegion = regionOf(this.levelId);
 
+    const sceneCanvas = document.getElementById('scenery') as HTMLCanvasElement | null;
+    if (sceneCanvas) {
+      this.scenery = new Scenery(sceneCanvas);
+      this.scenery.setRegion(this.mapRegion);
+    }
+
     if (this.profile.lowFx) {
       document.body.classList.add('low-fx');
       this.renderer.lowFx = true;
+      this.scenery?.setMode({ lowFx: true });
     }
     audio.setSfx(this.profile.soundOn !== false);
     audio.setMusic(this.profile.musicOn !== false);
@@ -194,16 +208,35 @@ export class App {
     document.addEventListener('pointerdown', wake, { capture: true });
     document.addEventListener('click', wake, { capture: true });
 
+    this.buildScreen = new BuildScreen({
+      profile: () => this.profile,
+      save: () => saveProfile(this.profile),
+      dog: (px) => this.renderer.dogArt(px),
+      toast: (m) => this.toast(m),
+      setRegion: (r) => this.tuneMusic(r),
+      refreshWallet: () => this.refreshWallet(),
+      play: () => this.openPreLevel(Math.min(this.profile.unlocked, TOTAL_LEVELS)),
+    });
+    this.minigames = new Minigames({
+      profile: () => this.profile,
+      save: () => saveProfile(this.profile),
+      piece: (c, px) => this.renderer.pieceArt(c, px),
+      dog: (px) => this.renderer.dogArt(px),
+      grant: (reward) => this.grantReward(reward),
+    });
+
     this.bindChrome();
     this.bindBoardInput();
-    this.takeChallengeFromUrl();
+    const showChallenge = this.takeChallengeFromUrl();
     void this.settlePurchase();
     void this.restoreAccount();
     void this.probeStore();
     this.bindInstall();
     this.renderMap();
     this.refreshWallet();
-    this.maybeShowIntro();
+    // A challenge link is often a new player's first visit: show the intro
+    // first, then the challenge, rather than letting one replace the other.
+    this.maybeShowIntro(showChallenge);
 
     window.addEventListener('resize', () => {
       if (this.screen === 'game' && this.session) this.renderer.layout();
@@ -223,6 +256,7 @@ export class App {
       el.addEventListener('click', () => {
         const target = el.dataset.goto!;
         if (target === 'map') this.show('map');
+        else if (target === 'build' || target === 'fun') this.show(target);
         else {
           this.shopTab = target === 'upgrades' ? 'upgrades' : 'boosters';
           this.renderShop();
@@ -398,14 +432,17 @@ export class App {
     // above so it covered the last card, and it has no business over a board.
     $('install-bar').dataset.hidden = String(screen !== 'map');
     ($('btn-restart') as HTMLButtonElement).hidden = !(screen === 'game' && this.profile.dev);
-    for (const id of ['map', 'shop', 'game', 'ranks'] as ScreenId[]) {
+    for (const id of ['map', 'shop', 'game', 'ranks', 'build', 'fun'] as ScreenId[]) {
       $(`screen-${id}`).dataset.active = String(id === screen);
     }
     document.body.classList.toggle('in-game', screen === 'game');
+    this.scenery?.setMode({ inGame: screen === 'game' });
     if (screen === 'game') this.startLoop();
     else this.stopLoop();
     if (screen === 'map') this.renderMap();
     if (screen === 'ranks') this.renderRanks();
+    if (screen === 'build') this.buildScreen.enter();
+    if (screen === 'fun') this.minigames.renderHub($('fun-body'));
     this.refreshWallet();
   }
 
@@ -416,6 +453,9 @@ export class App {
     $('stars-count').textContent = String(totalStars(this.profile));
     $('lives-count').textContent = this.profile.infiniteLives ? '∞' : String(this.profile.lives);
     $('shop-coins').textContent = coinText;
+    $('build-coins').textContent = coinText;
+    $('fun-coins').textContent = coinText;
+    this.refreshBadges();
 
     const timer = $('lives-timer');
     const ms = this.profile.infiniteLives ? 0 : msToNextLife(this.profile);
@@ -435,6 +475,39 @@ export class App {
   /** Keeps the backing track in the current region's key. */
   private tuneMusic(region: number): void {
     audio.setRegion(region);
+    this.scenery?.setRegion(region);
+  }
+
+  /** Little dots on the Build and Fun tabs when something is waiting. */
+  private refreshBadges(): void {
+    if (!this.minigames) return;
+    const pending = this.minigames.pending().length;
+    const funReady = pending > 0 || this.minigames.freePlayReady('wheel');
+    const funBadge = $('fun-badge');
+    funBadge.hidden = !funReady;
+    funBadge.textContent = pending > 0 ? String(pending) : '!';
+
+    // Build: a piece of an open project is affordable right now.
+    let affordable = false;
+    const open = projectsUnlocked(this.profile);
+    for (let i = 0; i < open && !affordable; i++) {
+      const built = stepsBuilt(this.profile, i);
+      if (built < PROJECTS[i].steps.length && this.profile.coins >= stepCost(i, built)) affordable = true;
+    }
+    $('build-badge').hidden = !affordable;
+  }
+
+  /** Applies a minigame reward. */
+  private grantReward(reward: Reward): void {
+    this.profile.coins += reward.coins;
+    for (const [id, n] of Object.entries(reward.items)) {
+      this.profile.inventory[id] = (this.profile.inventory[id] ?? 0) + (n ?? 0);
+    }
+    if (reward.lives) {
+      this.profile.lives = Math.min(livesCap(this.profile), this.profile.lives + reward.lives);
+    }
+    saveProfile(this.profile);
+    this.refreshWallet();
   }
 
   private toast(message: string): void {
@@ -460,7 +533,7 @@ export class App {
     host.innerHTML = '';
     const levels = allLevels();
     const firstId = this.mapRegion * LEVELS_PER_REGION + 1;
-    const offsets = [0, 26, 44, 26, 0, -26, -44, -26];
+    const offsets = [0, 46, 72, 46, 0, -46, -72, -46];
 
     for (let e = 0; e < LEVELS_PER_REGION / LEVELS_PER_EPISODE; e++) {
       const episodeIndex = this.mapRegion * 10 + e;
@@ -474,6 +547,7 @@ export class App {
 
       const track = document.createElement('div');
       track.className = 'map-track';
+      track.style.setProperty('--ep-hue', String(info.hue));
       for (let i = 0; i < LEVELS_PER_EPISODE; i++) {
         const def = levels[firstId - 1 + e * LEVELS_PER_EPISODE + i];
         track.appendChild(this.makeNode(def, offsets[(def.id - 1) % offsets.length]));
@@ -482,9 +556,64 @@ export class App {
     }
 
     requestAnimationFrame(() => {
+      host.querySelectorAll<HTMLElement>('.map-track').forEach((track) => this.drawTrail(track));
       const current = host.querySelector<HTMLElement>('[data-state="current"]');
       current?.scrollIntoView({ block: 'center' });
     });
+  }
+
+  /**
+   * A soft winding path joining an episode's level nodes. Positions are taken
+   * relative to the track's centre line, which is where the node offsets are
+   * measured from, so the path stays right if the screen is resized.
+   */
+  private drawTrail(track: HTMLElement): void {
+    track.querySelector('.map-trail')?.remove();
+    const box = track.getBoundingClientRect();
+    if (!box.width) return;
+    const mid = box.left + box.width / 2;
+    const half = 130;
+    const points = [...track.querySelectorAll<HTMLElement>('.node')].map((node) => {
+      const r = node.getBoundingClientRect();
+      return { x: half + (r.left + r.width / 2 - mid), y: r.top + r.height / 2 - box.top };
+    });
+    if (points.length < 2) return;
+
+    // Catmull-Rom through the node centres, as cubic Béziers.
+    let d = `M${points[0].x.toFixed(1)},${points[0].y.toFixed(1)}`;
+    for (let i = 0; i < points.length - 1; i++) {
+      const p0 = points[Math.max(0, i - 1)];
+      const p1 = points[i];
+      const p2 = points[i + 1];
+      const p3 = points[Math.min(points.length - 1, i + 2)];
+      const c1x = p1.x + (p2.x - p0.x) / 6;
+      const c1y = p1.y + (p2.y - p0.y) / 6;
+      const c2x = p2.x - (p3.x - p1.x) / 6;
+      const c2y = p2.y - (p3.y - p1.y) / 6;
+      d += ` C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`;
+    }
+
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.classList.add('map-trail');
+    svg.setAttribute('width', String(half * 2));
+    svg.setAttribute('height', String(Math.ceil(box.height)));
+    svg.setAttribute('aria-hidden', 'true');
+    const base = document.createElementNS(ns, 'path');
+    base.setAttribute('d', d);
+    base.setAttribute('class', 'trail-base');
+    base.setAttribute('fill', 'none');
+    base.setAttribute('stroke-width', '16');
+    base.setAttribute('stroke-linecap', 'round');
+    const dots = document.createElementNS(ns, 'path');
+    dots.setAttribute('d', d);
+    dots.setAttribute('class', 'trail-dots');
+    dots.setAttribute('fill', 'none');
+    dots.setAttribute('stroke-width', '7');
+    dots.setAttribute('stroke-linecap', 'round');
+    dots.setAttribute('stroke-dasharray', '0.1 15');
+    svg.append(base, dots);
+    track.prepend(svg);
   }
 
   private renderRegionStrip(): void {
@@ -536,7 +665,8 @@ export class App {
     const node = document.createElement('button');
     node.className = 'node';
     node.type = 'button';
-    node.style.transform = `translateX(${offset}px)`;
+    // `translate`, not `transform`, so the press animation does not reset it.
+    node.style.translate = `${offset}px 0`;
     node.dataset.state = !unlocked ? 'locked' : done ? 'done' : 'current';
     node.dataset.boss = String(isBossLevel(def.id));
     node.dataset.finale = String(isRegionFinale(def.id));
@@ -627,17 +757,21 @@ export class App {
   }
 
   /** A challenge link carries the sender's result in the query string. */
-  private takeChallengeFromUrl(): void {
+  /** Records a challenge from the URL; returns a function that shows it. */
+  private takeChallengeFromUrl(): (() => void) | null {
     const payload = new URLSearchParams(location.search).get('c');
-    if (!payload) return;
+    if (!payload) return null;
     const challenge = decodeChallenge(payload);
     // Strip it either way, so a reload does not re-apply it.
     history.replaceState(null, '', location.pathname);
-    if (!challenge) return;
+    if (!challenge) return null;
 
     addChallenge(this.profile, challenge);
     saveProfile(this.profile);
+    return () => this.showChallenge(challenge);
+  }
 
+  private showChallenge(challenge: NonNullable<ReturnType<typeof decodeChallenge>>): void {
     const already = bestOn(this.profile, challenge.level);
     this.openModal(`
       <div class="modal-tag">Challenge</div>
@@ -1073,6 +1207,7 @@ export class App {
         saveProfile(this.profile);
         this.renderer.lowFx = next;
         document.body.classList.toggle('low-fx', next);
+        this.scenery?.setMode({ lowFx: next });
         this.renderShop();
       });
       card.appendChild(btn);
@@ -1321,7 +1456,7 @@ export class App {
         for (const item of [...BOOSTERS, ...POWERUPS]) self.profile.inventory[item.id] = n;
         self.commitDev();
       },
-      lives(n = maxLives(self.profile.upgrades)): number {
+      lives(n = livesCap(self.profile)): number {
         self.profile.lives = n;
         self.commitDev();
         return n;
@@ -1588,7 +1723,7 @@ export class App {
   }
 
   private showLivesInfo(): void {
-    const cap = maxLives(this.profile.upgrades) + (hasPerk(this.profile, 'nine_lives') ? 5 : 0);
+    const cap = livesCap(this.profile);
     const ms = msToNextLife(this.profile);
     const mins = Math.ceil(ms / 60000);
     this.openModal(`
@@ -1768,9 +1903,12 @@ export class App {
   }
 
   /** First launch: explain the basics before anything else. */
-  private maybeShowIntro(): void {
-    if (hasSeen(this.profile, 'intro') || Object.keys(this.profile.levels).length) return;
-    this.showTeach(['intro'], null);
+  private maybeShowIntro(then: (() => void) | null = null): void {
+    if (hasSeen(this.profile, 'intro') || Object.keys(this.profile.levels).length) {
+      then?.();
+      return;
+    }
+    this.showTeach(['intro'], then);
   }
 
   /* ---------------------------------------------------------------- *
@@ -1820,6 +1958,13 @@ export class App {
       </div>
     `);
     this.wireClose();
+    // Reached from a finished level's result card ("Next level", "Retry"):
+    // backing out should leave the dead board, not strand the player on it.
+    if (this.screen === 'game' && this.session && this.session.state !== 'playing') {
+      $('modal')
+        .querySelector<HTMLElement>('[data-close]')
+        ?.addEventListener('click', () => this.show('map'));
+    }
 
     $('modal')
       .querySelectorAll<HTMLElement>('[data-booster]')
@@ -2020,8 +2165,14 @@ export class App {
 
     if (id === 'shuffle') {
       if (!this.spendPowerup(id)) return;
-      this.renderer.enqueue(this.session.usePowerup('shuffle'));
+      // Whatever was armed, selected or hinted refers to the old layout.
       this.armedPowerup = null;
+      this.freeSwapFirst = null;
+      this.renderer.selection = null;
+      this.renderer.targeting = false;
+      this.renderer.hint = null;
+      this.idleTime = 0;
+      this.renderer.enqueue(this.session.usePowerup('shuffle'));
       this.renderPowerbar();
       return;
     }
@@ -2078,6 +2229,9 @@ export class App {
         startPos = null;
         return;
       }
+      // A release whose press was ignored (mid-animation or after the level
+      // ended) must not select a cell whose gem is about to change under it.
+      if (!startPos) return;
       const cell = this.renderer.cellAt(x, y);
       startPos = null;
       if (!cell || !this.session) return;
@@ -2218,6 +2372,11 @@ export class App {
           (hasPerk(this.profile, 'treasure_hound') ? 1.5 : 1),
       );
       this.profile.coins += coins;
+      // Every fourth new level clears earns a bonus minigame round.
+      const bonusEarned = firstClear && session.def.id % 4 === 0;
+      if (bonusEarned) {
+        this.minigames.earnBonus(BONUS_ROTATION[(session.def.id / 4) % BONUS_ROTATION.length]);
+      }
       saveProfile(this.profile);
 
       // Fire and forget: a slow or missing backend must never hold up play.
@@ -2235,10 +2394,11 @@ export class App {
           Earned <strong><span class="coin"></span> ${coins}</strong>${
             session.leftoverMoves ? ` · ${session.leftoverMoves} moves left over` : ''
           }</p>
+        ${bonusEarned ? '<p class="bonus-note">🎁 Bonus round earned! Play it now for extra coins.</p>' : ''}
         <div class="btn-row">
           <button class="btn" id="to-map">Map</button>
           <button class="btn btn-primary" id="to-next">${
-            session.def.id >= TOTAL_LEVELS ? 'Finish' : `Level ${nextId}`
+            bonusEarned ? '🎁 Bonus round' : session.def.id >= TOTAL_LEVELS ? 'Finish' : `Level ${nextId}`
           }</button>
         </div>
       `);
@@ -2247,10 +2407,15 @@ export class App {
         this.mapRegion = regionOf(session.def.id);
         this.show('map');
       });
-      $('to-next').addEventListener('click', () => {
-        this.closeModal();
+      const onward = () => {
         if (session.def.id >= TOTAL_LEVELS) this.show('map');
         else this.openPreLevel(nextId);
+      };
+      $('to-next').addEventListener('click', () => {
+        this.closeModal();
+        // The bonus round sits between this level and the next one.
+        if (bonusEarned && this.minigames.playBonus(onward)) return;
+        onward();
       });
       return;
     }
@@ -2260,7 +2425,7 @@ export class App {
     // Second Wind can hand the life back on a loss.
     let refunded = false;
     if (Math.random() < lifeRefundChance(this.profile.upgrades)) {
-      this.profile.lives = Math.min(maxLives(this.profile.upgrades), this.profile.lives + 1);
+      this.profile.lives = Math.min(livesCap(this.profile), this.profile.lives + 1);
       refunded = true;
     }
     saveProfile(this.profile);

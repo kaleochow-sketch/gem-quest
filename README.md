@@ -72,6 +72,20 @@ star total so the tree opens up as you go:
   speed), Defuser (longer fuse clocks), Second Wind (chance to refund a lost
   life).
 
+**Build.** Coins also fix up a place in each region, seven pieces at a time:
+a seaside onigiri café, a dog park, a ski lodge, an oasis camp, an aquarium
+dome, a weather station, a crystal workshop, a clockwork toy shop, a stargazer
+igloo and a floating garden island. Every piece plays a short cutscene (the
+dog has something to say about it), and finishing a project throws a party
+and pays a bonus. The next project opens when the current one is finished or
+when the player reaches the next region, whichever is first
+(`src/game/build.ts`, `src/ui/buildscreen.ts`).
+
+**Fun & Games.** Four minigames pay coins and items: the daily Treat Wheel,
+Fetch (timing), Paw-print Memory and Dig for Treasure. Each has one free play
+a day, and every fourth new level cleared earns a bonus round that plays
+between that level and the next (`src/ui/minigames.ts`).
+
 Progress lives in `localStorage` under `gem-quest/profile/v1`.
 
 ## How the 1000 levels are built
@@ -106,8 +120,14 @@ coprime with 10.** An even stride lands on `id % 10 == 0` every time, samples
 nothing but boss levels, and reports a curve that does not exist; that mistake
 made region 1 look harder than region 5 during tuning.
 
-The curve at skill 0.85 currently runs from about 77% in region 1 down to
-10-15% in the final regions. A real player does better than the bot, since
+The curve at skill 0.85 currently runs from about 72% in region 1 down to
+about 12% in the final regions (39.5% overall).
+
+The single difficulty knob is `MOVE_SQUEEZE` in `src/game/levels.ts`: the share
+of each level's generated move budget the player actually gets (0.88 today).
+Goals are sized against the full budget first, so lowering it makes levels
+harder without shrinking the goals. Levels 1-15 are exempt and it eases in by
+level 40. Try a value without editing code: `MOVE_SQUEEZE=0.85 npm run sim`. A real player does better than the bot, since
 boosters and upgrades are not simulated.
 
 This harness caught the substantive bugs during development — most importantly

@@ -55,6 +55,26 @@ export interface Profile {
   infiniteCoins?: boolean;
   /** Lives are never spent. */
   infiniteLives?: boolean;
+  /** Pieces built per project id (see build.ts). */
+  build?: Record<string, number>;
+  /** Minigame bookkeeping. */
+  fun?: FunState;
+}
+
+export type MinigameKind = 'fetch' | 'wheel' | 'memory' | 'dig';
+
+export interface FunState {
+  /** Local date (YYYY-MM-DD) each minigame's free daily play was last used. */
+  played?: Partial<Record<MinigameKind, string>>;
+  /** Bonus rounds earned between levels and not yet played. */
+  pending?: MinigameKind[];
+}
+
+/** Today's local date, for once-a-day rewards. */
+export function today(now = new Date()): string {
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${now.getFullYear()}-${m}-${d}`;
 }
 
 function defaultProfile(): Profile {
@@ -80,6 +100,8 @@ function defaultProfile(): Profile {
     dev: false,
     infiniteCoins: false,
     infiniteLives: false,
+    build: {},
+    fun: { played: {}, pending: [] },
   };
 }
 
@@ -99,6 +121,8 @@ export function loadProfile(): Profile {
       challenges: parsed.challenges ?? [],
       purchases: parsed.purchases ?? [],
       seen: parsed.seen ?? [],
+      build: parsed.build ?? {},
+      fun: { played: parsed.fun?.played ?? {}, pending: parsed.fun?.pending ?? [] },
       version: PROFILE_VERSION,
     };
     // v2 introduced Lightning; make sure existing saves get one to try.
@@ -129,11 +153,17 @@ export function resetProfile(): Profile {
  * Lives
  * ------------------------------------------------------------------ */
 
-/** Credits any lives earned since the last tick. */
-/** Upgrade cap plus any purchased entitlement. */
-function livesCap(profile: Profile): number {
-  return maxLives(profile.upgrades) + ((profile.purchases ?? []).includes('nine_lives') ? 5 : 0);
+/**
+ * Upgrade cap plus any purchased entitlement. Store purchases land in
+ * `perks`; `purchases` is the older field, still honoured for old saves.
+ */
+export function livesCap(profile: Profile): number {
+  const nineLives =
+    Boolean(profile.perks?.nine_lives) || (profile.purchases ?? []).includes('nine_lives');
+  return maxLives(profile.upgrades) + (nineLives ? 5 : 0);
 }
+
+/** Credits any lives earned since the last tick. */
 
 export function refillLives(profile: Profile, now = Date.now()): Profile {
   const cap = livesCap(profile);
@@ -219,7 +249,7 @@ export function buyUpgrade(profile: Profile, id: UpgradeId): boolean {
     profile.coins -= cost;
   }
   profile.upgrades[id] = rank + 1;
-  if (id === 'vitality') profile.lives = Math.min(maxLives(profile.upgrades), profile.lives + 1);
+  if (id === 'vitality') profile.lives = Math.min(livesCap(profile), profile.lives + 1);
   return true;
 }
 

@@ -6,9 +6,11 @@ import { Blocker, BlockerKind, Gem, GemKind, Pos, Special, Step } from '../engin
  * Gem palette. Each colour also gets its own silhouette, so the board stays
  * readable without relying on hue alone.
  */
-export const GEM_COLORS = ['#e5372f', '#2f3e6b', '#43a047', '#1e88e5', '#8e24aa', '#ec407a', '#00bcd4'];
-const GEM_LIGHT = ['#ff8b7d', '#6d7fb8', '#8ee6a0', '#8ec9ff', '#d79cf0', '#ffa3c9', '#7ef0ff'];
-const GEM_DEEP = ['#8e1109', '#141a33', '#1b5e20', '#0d47a1', '#4a148c', '#ad1457', '#00707d'];
+// Candy-bright plates. Hues are unchanged from the original set so every
+// colour stays as distinguishable as before; they are just juicier.
+export const GEM_COLORS = ['#ff4d5e', '#3f4f8f', '#4cc764', '#36a2ff', '#a660e8', '#ff6fae', '#22cfe0'];
+const GEM_LIGHT = ['#ffa3ad', '#8a9ae0', '#b0f5ba', '#b0dcff', '#e0bcff', '#ffbfdc', '#a8f5fb'];
+const GEM_DEEP = ['#b81d38', '#1f2a5c', '#1f8a3a', '#1463c4', '#6a2bb0', '#c33479', '#08899a'];
 
 /** Plural names, used so collect goals read as objects rather than colours. */
 export const GEM_NAMES = [
@@ -130,11 +132,11 @@ const easeInQuad = (t: number) => t * t;
 const easeInOutQuad = (t: number) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
 
 /** How long the dog takes to cross the board, in seconds. */
-const SCOOT_SECONDS = 2.6;
+const SCOOT_SECONDS = 1.1;
 /** How long his brown streak lingers on a tile before it clears. */
-const BROWN_SECONDS = 1.05;
+const BROWN_SECONDS = 0.45;
 /** Number of shoves in one crossing. */
-const SCOOT_SHOVES = 6;
+const SCOOT_SHOVES = 4;
 /** Fraction of each shove spent moving; the rest is the pause after it. */
 const SHOVE_PUSH = 0.55;
 
@@ -192,6 +194,8 @@ export class GameRenderer {
   private staticLayer: HTMLCanvasElement | null = null;
   private jellyCache = new Map<number, HTMLCanvasElement>();
   private blockerCache = new Map<string, HTMLCanvasElement>();
+  /** Menu art (pieceArt, dogArt) as data URLs; independent of board size. */
+  private artCache = new Map<string, string>();
 
   private cell = 40;
   private originX = 0;
@@ -301,9 +305,14 @@ export class GameRenderer {
     this.canvas.width = Math.round(rect.width * this.dpr);
     this.canvas.height = Math.round(rect.height * this.dpr);
 
-    const pad = 3;
+    // Leave room for the tray: its rim reaches 0.2 of a cell past the pieces
+    // on every side, plus a lip underneath.
+    const pad = 4;
     this.cell = Math.floor(
-      Math.min((rect.width - pad * 2) / this.board.width, (rect.height - pad * 2) / this.board.height),
+      Math.min(
+        (rect.width - pad * 2) / (this.board.width + 0.5),
+        (rect.height - pad * 2) / (this.board.height + 0.65),
+      ),
     );
     this.originX = (rect.width - this.cell * this.board.width) / 2;
     this.originY = (rect.height - this.cell * this.board.height) / 2;
@@ -335,6 +344,48 @@ export class GameRenderer {
       this.gemCache.set(key, img);
     }
     return img;
+  }
+
+  /**
+   * A piece drawn exactly as on the board, at any size, for menus and
+   * minigames. Returned as a data URL so it can sit in an <img>.
+   */
+  pieceArt(color: number, px: number): string {
+    const key = `piece:${color}:${px}`;
+    const hit = this.artCache.get(key);
+    if (hit) return hit;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const side = Math.ceil(px * dpr);
+    const c = document.createElement('canvas');
+    c.width = side;
+    c.height = side;
+    const g = c.getContext('2d')!;
+    g.translate(side / 2, side / 2 - side * 0.04);
+    const idx = color % GEM_COLORS.length;
+    const radius = side * 0.4;
+    this.paintTile(g, idx, radius);
+    this.paintIcon(g, idx, radius);
+    const url = c.toDataURL();
+    this.artCache.set(key, url);
+    return url;
+  }
+
+  /** The dog's face on its own, for cutscenes and minigames. */
+  dogArt(px: number): string {
+    const key = `dog:${px}`;
+    const hit = this.artCache.get(key);
+    if (hit) return hit;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const side = Math.ceil(px * dpr);
+    const c = document.createElement('canvas');
+    c.width = side;
+    c.height = side;
+    const g = c.getContext('2d')!;
+    g.translate(side / 2, side / 2);
+    this.paintDogFace(g, side * 0.4);
+    const url = c.toDataURL();
+    this.artCache.set(key, url);
+    return url;
   }
 
   /** Draws one gem into its own canvas: shadow, coloured tile, then its icon. */
@@ -373,38 +424,67 @@ export class GameRenderer {
     const mid = GEM_COLORS[idx];
     const light = GEM_LIGHT[idx];
     const deep = GEM_DEEP[idx];
+    const lip = radius * 0.1;
 
+    // Soft contact shadow in the tile's own colour, not grey: it reads as
+    // light passing through a sweet rather than a hole in the tray.
     g.save();
-    g.globalAlpha = 0.4;
-    g.fillStyle = '#000';
-    g.filter = `blur(${Math.max(1, radius * 0.14)}px)`;
+    g.globalAlpha = 0.35;
+    g.fillStyle = deep;
+    g.filter = `blur(${Math.max(1, radius * 0.16)}px)`;
     g.beginPath();
-    g.ellipse(0, radius * 0.44, radius * 0.84, radius * 0.32, 0, 0, Math.PI * 2);
+    g.ellipse(0, radius * 0.6, radius * 0.86, radius * 0.3, 0, 0, Math.PI * 2);
     g.fill();
     g.restore();
 
-    const body = g.createLinearGradient(-radius, -radius, radius * 0.6, radius);
+    // The candy's lower lip, which gives it thickness.
+    g.save();
+    g.translate(0, lip);
+    g.fillStyle = deep;
+    this.tilePath(g, radius);
+    g.fill();
+    g.restore();
+
+    // Body: lit from the top left, rounding off into the lip.
+    g.save();
+    g.translate(0, -lip * 0.3);
+    const body = g.createRadialGradient(-radius * 0.35, -radius * 0.45, radius * 0.1, 0, 0, radius * 1.45);
     body.addColorStop(0, light);
-    body.addColorStop(0.45, mid);
+    body.addColorStop(0.5, mid);
     body.addColorStop(1, deep);
     g.fillStyle = body;
     this.tilePath(g, radius);
     g.fill();
 
-    g.save();
-    g.globalAlpha = 0.42;
-    const sheen = g.createLinearGradient(0, -radius, 0, 0);
-    sheen.addColorStop(0, 'rgba(255,255,255,0.95)');
-    sheen.addColorStop(1, 'rgba(255,255,255,0)');
-    g.fillStyle = sheen;
-    this.tilePath(g, radius * 0.94);
+    // A white rim just inside the edge, like sugar glaze.
+    g.strokeStyle = 'rgba(255,255,255,0.55)';
+    g.lineWidth = Math.max(1, radius * 0.07);
+    this.tilePath(g, radius * 0.9);
+    g.stroke();
+
+    // Glossy dome across the top half.
+    const gloss = g.createLinearGradient(0, -radius, 0, radius * 0.1);
+    gloss.addColorStop(0, 'rgba(255,255,255,0.75)');
+    gloss.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gloss;
+    g.beginPath();
+    g.ellipse(0, -radius * 0.42, radius * 0.72, radius * 0.44, 0, 0, Math.PI * 2);
+    g.fill();
+
+    // Specular glint.
+    g.fillStyle = 'rgba(255,255,255,0.9)';
+    g.beginPath();
+    g.ellipse(-radius * 0.5, -radius * 0.58, radius * 0.13, radius * 0.08, -0.6, 0, Math.PI * 2);
     g.fill();
     g.restore();
 
-    g.strokeStyle = 'rgba(10,5,20,0.5)';
-    g.lineWidth = Math.max(1.2, radius * 0.09);
+    g.strokeStyle = 'rgba(30,35,60,0.28)';
+    g.lineWidth = Math.max(1, radius * 0.05);
+    g.save();
+    g.translate(0, -lip * 0.3);
     this.tilePath(g, radius);
     g.stroke();
+    g.restore();
   }
 
   private tilePath(g: CanvasRenderingContext2D, radius: number): void {
@@ -1056,6 +1136,7 @@ export class GameRenderer {
         const sa = this.spriteAt(step.a.r, step.a.c);
         const sb = this.spriteAt(step.b.r, step.b.c);
         audio.sfx(step.valid ? 'swap' : 'invalid');
+        if (!step.valid) audio.haptic([12, 40, 12]);
         duration = step.valid ? 175 : 340;
         if (sa) {
           from.set(sa.id, { x: sa.x, y: sa.y });
@@ -1230,8 +1311,13 @@ export class GameRenderer {
     const sweeps: Scoot[] = [];
     if (step.cleared.length) audio.sfx('match', step.cascade);
     for (const detonation of step.detonations) {
-      if (detonation.special === Special.Bomb) audio.sfx('bomb');
-      else if (detonation.special === Special.Rainbow) audio.sfx('rainbow');
+      if (detonation.special === Special.Bomb) {
+        audio.sfx('bomb');
+        audio.haptic(25);
+      } else if (detonation.special === Special.Rainbow) {
+        audio.sfx('rainbow');
+        audio.haptic(45);
+      }
     }
     if (step.created.length) audio.sfx('special');
     if (step.collected.length) audio.sfx('ingredient');
@@ -1339,6 +1425,8 @@ export class GameRenderer {
     }
 
     if (step.cascade >= 3) {
+      // Long chains build physically as well as audibly.
+      this.shake = Math.max(this.shake, Math.min(10, step.cascade * 1.6));
       this.banner = {
         text: COMBO_WORDS[Math.min(step.cascade, COMBO_WORDS.length - 1)],
         sub: `${step.cascade} chain`,
@@ -1693,49 +1781,37 @@ export class GameRenderer {
       ctx.closePath();
     };
 
-    ctx.save();
-    ctx.shadowColor = 'rgba(0,0,0,0.55)';
-    ctx.shadowBlur = this.cell * 0.6;
-    ctx.shadowOffsetY = this.cell * 0.16;
+    // A clear glass tray: the region's scenery carries on behind the pieces.
+    // Only a faint frosting and a white rim mark its edge.
     const fill = ctx.createLinearGradient(0, y, 0, y + rh);
-    fill.addColorStop(0, 'rgba(96, 74, 168, 0.42)');
-    fill.addColorStop(1, 'rgba(28, 20, 58, 0.55)');
+    fill.addColorStop(0, 'rgba(255, 255, 255, 0.16)');
+    fill.addColorStop(1, 'rgba(255, 255, 255, 0.08)');
     ctx.fillStyle = fill;
     round(x, y, rw, rh, radius);
     ctx.fill();
-    ctx.restore();
 
-    ctx.strokeStyle = 'rgba(255,255,255,0.22)';
-    ctx.lineWidth = 1.5;
-    round(x + 0.75, y + 0.75, rw - 1.5, rh - 1.5, radius);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+    ctx.lineWidth = Math.max(3, this.cell * 0.07);
+    round(x + 1.5, y + 1.5, rw - 3, rh - 3, radius);
     ctx.stroke();
-
-    ctx.save();
-    ctx.globalAlpha = 0.5;
-    const sheen = ctx.createLinearGradient(0, y, 0, y + rh * 0.35);
-    sheen.addColorStop(0, 'rgba(255,255,255,0.3)');
-    sheen.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.fillStyle = sheen;
-    round(x + 2, y + 2, rw - 4, rh * 0.35, radius);
-    ctx.fill();
-    ctx.restore();
 
     for (let r = 0; r < this.board.height; r++) {
       for (let c = 0; c < this.board.width; c++) {
         if (this.board.at(r, c)!.hole) continue;
         const cx = this.originX + c * this.cell;
         const cy = this.originY + r * this.cell;
+        // Frosted-glass checker squares: light enough to see the scene
+        // through, solid enough to read the grid.
         const well = ctx.createLinearGradient(0, cy, 0, cy + this.cell);
-        if ((r + c) % 2 === 0) {
-          well.addColorStop(0, 'rgba(0,0,0,0.26)');
-          well.addColorStop(1, 'rgba(255,255,255,0.07)');
-        } else {
-          well.addColorStop(0, 'rgba(0,0,0,0.18)');
-          well.addColorStop(1, 'rgba(255,255,255,0.04)');
-        }
+        const strong = (r + c) % 2 === 0;
+        well.addColorStop(0, `rgba(255, 255, 255, ${strong ? 0.38 : 0.26})`);
+        well.addColorStop(1, `rgba(255, 255, 255, ${strong ? 0.24 : 0.14})`);
         ctx.fillStyle = well;
         round(cx + 1.5, cy + 1.5, this.cell - 3, this.cell - 3, this.cell * 0.24);
         ctx.fill();
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
       }
     }
     return layer;
@@ -1798,21 +1874,34 @@ export class GameRenderer {
     const y = 0;
     const pad = cell * 0.07;
     const size = cell - pad * 2;
+    // Traces onto the cache canvas. This used to call `this.roundRect`, which
+    // draws on the main board canvas instead, so the crate and stone bodies
+    // were never painted: crates showed as a bare cross, stones as nothing.
+    const roundRect = (rx: number, ry: number, rw: number, rh: number, r: number) => {
+      const rr = Math.min(r, rw / 2, rh / 2);
+      ctx.beginPath();
+      ctx.moveTo(rx + rr, ry);
+      ctx.arcTo(rx + rw, ry, rx + rw, ry + rh, rr);
+      ctx.arcTo(rx + rw, ry + rh, rx, ry + rh, rr);
+      ctx.arcTo(rx, ry + rh, rx, ry, rr);
+      ctx.arcTo(rx, ry, rx + rw, ry, rr);
+      ctx.closePath();
+    };
 
     ctx.save();
 
     if (blocker.kind === 'crate') {
       const grad = ctx.createLinearGradient(x, y, x + cell * 0.4, y + cell);
-      grad.addColorStop(0, blocker.hp >= 2 ? '#c08850' : '#e0a768');
-      grad.addColorStop(1, blocker.hp >= 2 ? '#6b4318' : '#8d5b25');
+      grad.addColorStop(0, blocker.hp >= 2 ? '#e0a46a' : '#f6c88f');
+      grad.addColorStop(1, blocker.hp >= 2 ? '#a8693a' : '#d39a5c');
       ctx.fillStyle = grad;
-      this.roundRect(x + pad, y + pad, size, size, cell * 0.16);
+      roundRect(x + pad, y + pad, size, size, cell * 0.16);
       ctx.fill();
       ctx.restore();
 
-      ctx.strokeStyle = 'rgba(52,28,8,0.9)';
+      ctx.strokeStyle = 'rgba(110,60,25,0.85)';
       ctx.lineWidth = Math.max(2, cell * 0.05);
-      this.roundRect(x + pad, y + pad, size, size, cell * 0.16);
+      roundRect(x + pad, y + pad, size, size, cell * 0.16);
       ctx.stroke();
       ctx.beginPath();
       ctx.moveTo(x + pad, y + cell / 2);
@@ -1842,17 +1931,17 @@ export class GameRenderer {
         y + cell / 2,
         cell * 0.58,
       );
-      grad.addColorStop(0, '#a8afc0');
-      grad.addColorStop(0.6, '#6f7688');
-      grad.addColorStop(1, '#3c4252');
+      grad.addColorStop(0, '#d6dae6');
+      grad.addColorStop(0.6, '#9aa1b6');
+      grad.addColorStop(1, '#6a7188');
       ctx.fillStyle = grad;
-      this.roundRect(x + pad, y + pad, size, size, cell * 0.3);
+      roundRect(x + pad, y + pad, size, size, cell * 0.3);
       ctx.fill();
       ctx.restore();
 
-      ctx.strokeStyle = 'rgba(16,20,30,0.85)';
+      ctx.strokeStyle = 'rgba(60,64,90,0.8)';
       ctx.lineWidth = Math.max(2, cell * 0.045);
-      this.roundRect(x + pad, y + pad, size, size, cell * 0.3);
+      roundRect(x + pad, y + pad, size, size, cell * 0.3);
       ctx.stroke();
       ctx.save();
       ctx.globalAlpha = 0.45;
@@ -1860,6 +1949,24 @@ export class GameRenderer {
       ctx.beginPath();
       ctx.ellipse(x + cell * 0.36, y + cell * 0.32, cell * 0.1, cell * 0.06, -0.6, 0, Math.PI * 2);
       ctx.fill();
+      ctx.restore();
+
+      // A sleepy little face: stones only wake up for a blast.
+      ctx.save();
+      ctx.strokeStyle = 'rgba(55,58,82,0.85)';
+      ctx.lineCap = 'round';
+      ctx.lineWidth = Math.max(1.2, cell * 0.04);
+      for (const side of [-1, 1]) {
+        ctx.beginPath();
+        ctx.arc(x + cell / 2 + side * cell * 0.14, y + cell * 0.52, cell * 0.06, 0.15 * Math.PI, 0.85 * Math.PI);
+        ctx.stroke();
+      }
+      ctx.fillStyle = 'rgba(255,140,160,0.5)';
+      for (const side of [-1, 1]) {
+        ctx.beginPath();
+        ctx.ellipse(x + cell / 2 + side * cell * 0.25, y + cell * 0.62, cell * 0.06, cell * 0.035, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
       ctx.restore();
     }
   }
@@ -1983,7 +2090,7 @@ export class GameRenderer {
       g.closePath();
     };
 
-    const alpha = layers >= 3 ? 0.46 : layers >= 2 ? 0.34 : 0.22;
+    const alpha = layers >= 3 ? 0.52 : layers >= 2 ? 0.4 : 0.28;
     g.save();
     round(1.5, 1.5, cell - 3, cell - 3, cell * 0.24);
     g.clip();
@@ -2005,7 +2112,7 @@ export class GameRenderer {
     g.restore();
 
     // The rim glow is baked in here rather than blurred every frame.
-    g.strokeStyle = `rgba(196, 246, 255, ${0.55 + layers * 0.15})`;
+    g.strokeStyle = `rgba(50, 150, 240, ${0.55 + layers * 0.13})`;
     g.lineWidth = Math.max(1.5, cell * (layers >= 2 ? 0.07 : 0.045));
     g.shadowColor = 'rgba(120, 220, 255, 0.9)';
     g.shadowBlur = cell * 0.18;
@@ -2103,7 +2210,7 @@ export class GameRenderer {
       const y = this.originY + this.selection.r * this.cell;
       const pulse = 0.6 + Math.sin(this.time * 8) * 0.4;
       ctx.save();
-      ctx.strokeStyle = `rgba(255,255,255,${pulse * 0.35})`;
+      ctx.strokeStyle = `rgba(60,170,255,${0.45 + pulse * 0.4})`;
       ctx.lineWidth = Math.max(5, this.cell * 0.13);
       this.roundRect(x + 2, y + 2, this.cell - 4, this.cell - 4, this.cell * 0.24);
       ctx.stroke();
@@ -2311,7 +2418,7 @@ export class GameRenderer {
       ctx.globalAlpha = life;
       ctx.font = `800 ${Math.round(f.size)}px ui-rounded, system-ui, sans-serif`;
       ctx.lineWidth = Math.max(3, f.size * 0.22);
-      ctx.strokeStyle = 'rgba(12,8,24,0.75)';
+      ctx.strokeStyle = 'rgba(40,55,90,0.85)';
       ctx.lineJoin = 'round';
       ctx.strokeText(f.text, f.x, f.y);
       ctx.fillStyle = f.color;
@@ -2338,17 +2445,22 @@ export class GameRenderer {
     const size = this.cell * 0.9;
     ctx.font = `900 ${Math.round(size)}px ui-rounded, system-ui, sans-serif`;
     ctx.lineWidth = size * 0.16;
-    ctx.strokeStyle = 'rgba(12,8,24,0.8)';
+    ctx.strokeStyle = '#2f5aa8';
     ctx.lineJoin = 'round';
+    ctx.strokeText(this.banner.text, 0, 0);
+    ctx.lineWidth = size * 0.06;
+    ctx.strokeStyle = '#ffffff';
     ctx.strokeText(this.banner.text, 0, 0);
     const fill = ctx.createLinearGradient(0, -size / 2, 0, size / 2);
     fill.addColorStop(0, '#fff6d6');
-    fill.addColorStop(1, '#ffc233');
+    fill.addColorStop(0.5, '#ffd84d');
+    fill.addColorStop(1, '#ff9f2e');
     ctx.fillStyle = fill;
     ctx.fillText(this.banner.text, 0, 0);
 
     ctx.font = `800 ${Math.round(size * 0.34)}px ui-rounded, system-ui, sans-serif`;
     ctx.lineWidth = size * 0.08;
+    ctx.strokeStyle = '#2f5aa8';
     ctx.strokeText(this.banner.sub, 0, size * 0.68);
     ctx.fillStyle = '#ffffff';
     ctx.fillText(this.banner.sub, 0, size * 0.68);

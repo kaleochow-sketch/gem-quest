@@ -44,6 +44,7 @@ class AudioEngine {
   private nextStepAt = 0;
   private step = 0;
   private playing = false;
+  private visibilityBound = false;
 
   /** Transposition and tempo, varied per region so areas sound distinct. */
   private root = 57;
@@ -77,8 +78,17 @@ class AudioEngine {
       this.ctx = new Ctor();
       this.build();
     }
-    if (this.ctx.state === 'suspended') void this.ctx.resume();
+    // iOS reports 'interrupted' (not 'suspended') after a call or Siri.
+    if (this.ctx.state !== 'running' && !document.hidden) void this.ctx.resume();
     if (this.musicEnabled && !this.playing) this.startMusic();
+    if (!this.visibilityBound) {
+      this.visibilityBound = true;
+      document.addEventListener('visibilitychange', () => {
+        if (!this.ctx) return;
+        if (document.hidden) void this.ctx.suspend();
+        else void this.ctx.resume();
+      });
+    }
   }
 
   private build(): void {
@@ -182,6 +192,19 @@ class AudioEngine {
   /* ---------------------------------------------------------------- *
    * Effects
    * ---------------------------------------------------------------- */
+
+  /**
+   * A short vibration on devices that support it (Android; iOS Safari has no
+   * Vibration API). It follows the sound switch, so muting also silences it.
+   */
+  haptic(pattern: number | number[]): void {
+    if (!this.sfxEnabled || typeof navigator === 'undefined' || !navigator.vibrate) return;
+    try {
+      navigator.vibrate(pattern);
+    } catch {
+      /* Some browsers throw before the first user gesture. */
+    }
+  }
 
   /** @param level cascade depth, which lifts the pitch of a match. */
   sfx(name: SfxName, level = 1): void {
@@ -297,6 +320,9 @@ class AudioEngine {
     const ctx = this.ctx;
     if (!ctx) return;
     const stepDur = 60 / this.bpm / STEPS_PER_BEAT;
+    // Background tabs throttle the timer while the audio clock runs on; skip
+    // the missed steps rather than firing them all at once on return.
+    if (this.nextStepAt < ctx.currentTime) this.nextStepAt = ctx.currentTime + 0.05;
     while (this.nextStepAt < ctx.currentTime + 0.2) {
       this.emitStep(this.step, this.nextStepAt, stepDur);
       this.step++;
