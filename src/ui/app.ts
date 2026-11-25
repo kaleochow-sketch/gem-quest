@@ -46,9 +46,10 @@ import { LevelSession } from '../game/session.js';
 import { Scenery } from '../render/scenery.js';
 import { BuildScreen } from './buildscreen.js';
 import { BONUS_ROTATION, Minigames, Reward } from './minigames.js';
-import { PROJECTS, projectReward, projectsUnlocked, stepCost, stepsBuilt } from '../game/build.js';
-import { cafeState, grantDecor, openTasks, rollDecor, taskCost } from '../game/cafe.js';
-import { closeWorld, has3d, openCafe, playDig, playFetch } from '../world/index.js';
+import { projectReward, projectsUnlocked } from '../game/build.js';
+import { grantDecor, rollDecor } from '../game/cafe.js';
+import { closeWorld, has3d, openPlace, playDig, playFetch } from '../world/index.js';
+import { placeFor } from '../game/places.js';
 import {
   Entitlements,
   StoreItem,
@@ -221,8 +222,8 @@ export class App {
       refreshWallet: () => this.refreshWallet(),
       play: () => this.openPreLevel(Math.min(this.profile.unlocked, TOTAL_LEVELS)),
       open3d: (index) => {
-        if (index !== 0 || !this.can3d) return false;
-        this.openCafe3d();
+        if (!this.can3d) return false;
+        this.openPlace3d(index);
         return true;
       },
     });
@@ -510,20 +511,16 @@ export class App {
     let affordable = false;
     const open = projectsUnlocked(this.profile);
     for (let i = 0; i < open && !affordable; i++) {
-      if (i === 0) {
-        affordable = openTasks(cafeState(this.profile)).some((t) => this.profile.coins >= taskCost(t.id));
-        continue;
-      }
-      const built = stepsBuilt(this.profile, i);
-      if (built < PROJECTS[i].steps.length && this.profile.coins >= stepCost(i, built)) affordable = true;
+      const place = placeFor(i);
+      affordable = place.open(place.state(this.profile)).some((t) => this.profile.coins >= place.cost(t.id));
     }
     $('build-badge').hidden = !affordable;
   }
 
-  /** Walks into the 3D café. */
-  private openCafe3d(): void {
+  /** Walks into a region's 3D place. */
+  private openPlace3d(region: number): void {
     this.stopLoop();
-    openCafe(this.profile, {
+    openPlace(region, this.profile, {
       profile: () => this.profile,
       save: () => saveProfile(this.profile),
       refreshWallet: () => this.refreshWallet(),
@@ -534,15 +531,15 @@ export class App {
         this.openPreLevel(Math.min(this.profile.unlocked, TOTAL_LEVELS));
       },
       finished: () => {
-        // The café's own grand opening: pay the project bonus, then party.
-        const reward = projectReward(0);
+        // The grand opening: pay the project bonus, then party.
+        const reward = projectReward(region);
         this.profile.coins += reward.coins;
         this.profile.inventory[reward.item] = (this.profile.inventory[reward.item] ?? 0) + 1;
         saveProfile(this.profile);
         this.refreshWallet();
         closeWorld();
         this.show('build');
-        this.buildScreen.celebrateProject(0);
+        this.buildScreen.celebrateProject(region);
       },
     });
   }

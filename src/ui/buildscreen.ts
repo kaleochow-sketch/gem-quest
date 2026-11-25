@@ -174,16 +174,18 @@ export class BuildScreen {
     const size = projectSize(this.index);
     document.getElementById('diorama')!.innerHTML = `
       <div class="enter3d">
-        <div class="enter3d-art">🏝️<img src="${this.deps.dog(96)}" alt="" /></div>
+        <div class="enter3d-art">${project.steps[0].icon}<img src="${this.deps.dog(96)}" alt="" /></div>
         <strong>${project.name}</strong>
-        <p>Walk around the beach in 3D, fix up the café job by job, and paint it your way.</p>
+        <p>Walk around in 3D, fix it up job by job, paint it your way, and run it as a little business.</p>
         <button class="btn btn-primary" id="enter-3d" type="button">Walk in →</button>
       </div>`;
     const pct = Math.round((done / size) * 100);
     document.getElementById('build-panel')!.innerHTML = `
       <div class="build-head"><strong>${project.name}</strong><small>${done} / ${size} jobs</small></div>
       <div class="build-bar"><i style="width:${pct}%"></i></div>
-      <p class="panel-blurb">${project.blurb} It starts run-down: clean it up, repair it, paint it and open for business.</p>`;
+      <p class="panel-blurb">${project.blurb} It starts run-down: clean it up, repair it, paint it and open for business.</p>
+      <div class="task"><span class="task-icon">🚪</span><div class="task-body"><strong>${done ? 'Keep going' : 'Start restoring'}</strong><small>${size - done} jobs left</small></div><button class="buy-btn" id="enter-3d-2" type="button">Walk in</button></div>`;
+    document.getElementById('enter-3d-2')?.addEventListener('click', () => this.deps.open3d?.(this.index));
     document.getElementById('enter-3d')!.addEventListener('click', () => this.deps.open3d?.(this.index));
   }
 

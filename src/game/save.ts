@@ -60,7 +60,13 @@ export interface Profile {
   /** Minigame bookkeeping. */
   fun?: FunState;
   /** 3D places being restored (see cafe.ts). */
-  world?: { cafe?: import('./cafe.js').CafeState };
+  world?: {
+    cafe?: import('./cafe.js').CafeState;
+    /** The real day the dog last slept, in any place. */
+    slept?: string;
+    /** Other places, keyed by id (see places.ts). */
+    [place: string]: unknown;
+  };
 }
 
 export type MinigameKind = 'fetch' | 'wheel' | 'memory' | 'dig';

@@ -128,8 +128,29 @@ joystick (anywhere on screen), catch it, and bring it back. A ring shows
 where it will land. Points are paid on delivery: 100 for an air catch, 150
 for a leaping catch, 40 for picking it up off the sand, multiplied by your
 catch streak (up to ×3), plus a quick-return bonus. 75 seconds, and the
-throws get longer as the round goes on. The other nine
-regions still use the 2D diorama until their 3D places are built.
+throws get longer as the round goes on. **Every region is a 3D place.** The other nine follow the same pattern as
+the café, each with its own look, product and building
+(`src/game/places.ts`, `src/world/region.ts`, `src/world/themes.ts`):
+
+| Region | Place | Sells | Building |
+| --- | --- | --- | --- |
+| Emerald Grove | Pup's Dog Park | dog treats | plank clubhouse, duck pond |
+| Frostpeak Pass | Cosy Ski Lodge | hot cocoa | log lodge, frozen lake |
+| Amber Desert | Desert Oasis Camp | fresh juice | adobe house, oasis pool |
+| Coral Depths | Coral Aquarium Dome | seaweed snacks | glass dome, lagoon |
+| Thunder Mesa | Mesa Weather Station | storm soda | stone tower with radar |
+| Obsidian Mines | Crystal Workshop | crystal candy | stone workshop in a quarry |
+| Clockwork City | Clockwork Toy Shop | wind-up toys | brick shop with a clock |
+| Aurora Reach | Stargazer Igloo | star cookies | ice igloo under the aurora |
+| Prism Citadel | Floating Garden Island | rainbow ice cream | crystal cottage in the sky |
+
+Each has 26 jobs in four stages (clear the grounds, fix the building, open
+the shop, then the region's life), priced to take about that region's hundred
+levels; weather (petals, snow, dust, storms with lightning, embers, steam,
+bubbles, sparkles, the aurora); trees to gather from daily; somewhere to fish
+where there is water; a landmark; a lookout tower, fire pit and bed; and the
+same visitors, stock, worker and tip jar as the café. Sleep is once a real
+day across all places.
 
 **Fun & Games.** Four minigames pay coins and items: the daily Treat Wheel,
 Fetch (timing), Paw-print Memory and Dig for Treasure. Each has one free play

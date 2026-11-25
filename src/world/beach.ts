@@ -9,7 +9,8 @@
  */
 import * as THREE from 'three';
 import { CafeState, DECOR, choiceOf } from '../game/cafe.js';
-import { Place, World, TAU } from './engine.js';
+import { World, TAU } from './engine.js';
+import type { Seat, Site, Spot } from './site.js';
 import { ball, box, cyl, makePalm, makeGrass, makeRock, mat, shadowed } from './models.js';
 
 /** Height of the sand at (x, z): flat beach, sloping into the sea, dunes behind. */
@@ -27,16 +28,7 @@ export const SHACK = { x0: -3.6, x1: 3.6, z0: -9.2, z1: -4.1 };
 /** The pier: a walkway from a ramp on the sand out over the water. */
 export const PIER = { x0: 12.1, x1: 13.9, rampZ: 4.3, z0: 6.5, z1: 19.2, deck: 0.66 };
 
-/** Somewhere the dog can do something (sleep, serve, fish…). */
-export interface Spot {
-  kind: 'hammock' | 'counter' | 'kitchen' | 'bonfire' | 'palm' | 'pier' | 'boat' | 'lounger' | 'tower' | 'table' | 'flowers';
-  x: number;
-  z: number;
-  /** How close the dog must be. */
-  r: number;
-  /** Distinguishes several of a kind (each palm can be shaken once a day). */
-  key: string;
-}
+export type { Spot } from './site.js';
 
 /** The beach's own palms: x, z, height, lean. */
 const PALMS: [number, number, number, number][] = [
@@ -79,7 +71,7 @@ function signTexture(text: string, bg: string): THREE.CanvasTexture {
   return tex;
 }
 
-export class Beach implements Place {
+export class Beach implements Site {
   readonly world: World;
   readonly root = new THREE.Group();
   readonly anim = new Set<(dt: number, t: number) => void>();
@@ -101,7 +93,25 @@ export class Beach implements Place {
   /** Things to interact with, rebuilt with the café. */
   spots: Spot[] = [];
   /** The lounger and table seats, for the dog and for visitors. */
-  seats: { x: number; z: number; y: number; facing: number }[] = [];
+  seats: Seat[] = [];
+  readonly queue: [number, number][] = [[0, -0.55], [0.15, 0.6], [-0.15, 1.75]];
+  readonly workerAt: [number, number, number] = [0, 0.36, -2.85];
+  readonly start: [number, number] = [0, 3];
+
+  get content(): THREE.Group {
+    return this.cafe;
+  }
+
+  walkRoutes(): [number, number][][] {
+    return [
+      [[-23, 3.4], [-3.4, 3.0]],
+      [[23, 3.6], [4.2, 3.4]],
+    ];
+  }
+
+  hasBoats(): boolean {
+    return this.pierFixed;
+  }
 
   constructor(world: World) {
     this.world = world;
@@ -370,7 +380,7 @@ export class Beach implements Place {
     // The beach's own palms are solid, and can be shaken for coconuts.
     PALMS.forEach(([x, z], i) => {
       this.colliders.push({ x, z, r: 0.55 });
-      this.spots.push({ kind: 'palm', x, z, r: 1.7, key: `palm-${i}` });
+      this.spots.push({ kind: 'palm', x, z, r: 1.7, key: `palm-${i}`, label: 'Shake the palm', icon: '🥥', reward: 10 });
     });
 
     const has = (id: string) => state.done.includes(id);
@@ -903,7 +913,7 @@ export class Beach implements Place {
         const palm = makePalm(h, lean, this.world.windUniforms, this.anim);
         add(palm, x, z);
         this.colliders.push({ x, z, r: 0.5 });
-        this.spots.push({ kind: 'palm', x, z, r: 1.7, key: `palm-new-${x}` });
+        this.spots.push({ kind: 'palm', x, z, r: 1.7, key: `palm-new-${x}`, label: 'Shake the palm', icon: '🥥', reward: 10 });
       }
     } else {
       // A dead palm stump where the new palms will go.
@@ -946,7 +956,7 @@ export class Beach implements Place {
       const ax = Math.sin(0.5);
       const az = Math.cos(0.5);
       for (const k of [-1.15, 0, 1.15]) this.colliders.push({ x: 9 + ax * k, z: 5.6 + az * k, r: k ? 0.8 : 1.0 });
-      if (has('boat')) this.spots.push({ kind: 'boat', x: 9, z: 5.6, r: 2.8, key: 'boat' });
+      if (has('boat')) this.spots.push({ kind: 'boat', x: 9, z: 5.6, r: 2.8, key: 'boat', at: [9, 0.38, 5.6], exit: [10.9, 4.0], facing: 0.5 });
     }
     // The pier: missing planks and leaning posts, or solid with rails.
     {
@@ -980,7 +990,7 @@ export class Beach implements Place {
         ramp.rotation.x = -Math.atan2(rise, run);
         ramp.position.set(0, (PIER.deck + sandY(13, PIER.rampZ)) / 2 - 0.06, -run / 2);
         pier.add(ramp);
-        this.spots.push({ kind: 'pier', x: 13, z: 18.4, r: 1.8, key: 'pier' });
+        this.spots.push({ kind: 'pier', x: 13, z: 18.4, r: 1.8, key: 'pier', at: [13, PIER.deck, 18.6], exit: [13, 17.6], facing: 0, bob: [13.2, -0.25, 22.5] });
       }
       add(pier, 13, 6.5, 0);
     }
@@ -1004,7 +1014,7 @@ export class Beach implements Place {
         l.rotation.y = Math.PI + 0.25;
         add(tag(l, 'loungers'), x, z);
         this.colliders.push({ x, z: z - 0.5, r: 0.6 }, { x, z: z + 0.5, r: 0.6 });
-        this.spots.push({ kind: 'lounger', x, z, r: 1.8, key: `lounger-${x}` });
+        this.spots.push({ kind: 'lounger', x, z, r: 1.8, key: `lounger-${x}`, at: [x, sandY(x, z) + 0.55, z], exit: [x - 1.3, z], facing: Math.PI + 0.25 });
       }
     }
     if (has('tower')) {
@@ -1026,7 +1036,7 @@ export class Beach implements Place {
       t.add(deck, hut, roof, ring);
       add(t, -10.5, 6.4);
       this.colliders.push({ x: -10.5, z: 6.4, r: 1.05 });
-      this.spots.push({ kind: 'tower', x: -10.5, z: 6.4, r: 2.3, key: 'tower' });
+      this.spots.push({ kind: 'tower', x: -10.5, z: 6.4, r: 2.3, key: 'tower', at: [-10.5, sandY(-10.5, 6.4) + 2.48, 6.6], exit: [-10.5, 4.6], facing: 0 });
     }
     if (has('bonfire')) {
       const f = new THREE.Group();
@@ -1117,7 +1127,7 @@ export class Beach implements Place {
       add(tag(h, 'hammock'), -12, -4.4);
       this.colliders.push({ x: -12 - 2.05 * Math.cos(0.2), z: -4.4 + 2.05 * Math.sin(0.2), r: 0.5 });
       this.colliders.push({ x: -12 + 2.05 * Math.cos(0.2), z: -4.4 - 2.05 * Math.sin(0.2), r: 0.5 });
-      this.spots.push({ kind: 'hammock', x: -12, z: -3.2, r: 2.0, key: 'hammock' });
+      this.spots.push({ kind: 'hammock', x: -12, z: -3.2, r: 2.0, key: 'hammock', at: [-12, sandY(-12, -4.4) + 0.85, -4.4], exit: [-12, -2.8], facing: 0.2 + Math.PI / 2 });
       const sway = (_dt: number, t: number) => {
         if (!bed.parent) {
           this.anim.delete(sway);

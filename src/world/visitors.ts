@@ -6,7 +6,8 @@
  * stands behind the counter and serves them; otherwise the dog does.
  */
 import * as THREE from 'three';
-import { Beach, PIER } from './beach.js';
+import { PIER } from './beach.js';
+import type { Site } from './site.js';
 import { World } from './engine.js';
 import { ThrowerRig, box, cyl, makeMarker, makePerson, mat, shadowed } from './models.js';
 
@@ -36,11 +37,6 @@ export interface VisitorHooks {
   leftHungry(): void;
 }
 
-const QUEUE: [number, number][] = [
-  [0, -0.55],
-  [0.15, 0.6],
-  [-0.15, 1.75],
-];
 const SPEED = 1.7;
 
 /** Floating text above something, rising and fading. */
@@ -114,7 +110,7 @@ export class Visitors {
   private seatsTaken = new Set<number>();
   readonly root = new THREE.Group();
 
-  constructor(private world: World, private beach: Beach, private hooks: VisitorHooks) {
+  constructor(private world: World, private beach: Site, private hooks: VisitorHooks) {
     world.scene.add(this.root);
   }
 
@@ -158,7 +154,7 @@ export class Visitors {
       const apron = box(0.5, 0.55, 0.04, mat('#ffffff', 0.7));
       apron.position.set(0, 1.05, 0.33);
       this.worker.group.add(apron);
-      this.worker.group.position.set(0, 0.36, -2.85);
+      this.worker.group.position.set(...this.beach.workerAt);
       this.worker.face(new THREE.Vector3(0, 0, 10));
       this.worker.group.rotation.y = 0;
       this.root.add(this.worker.group);
@@ -179,7 +175,7 @@ export class Visitors {
       timer: 0,
       patience: 32,
     };
-    const pier = this.beach.spots.some((s) => s.kind === 'pier');
+    const pier = this.beach.hasBoats();
     const boating = this.list.some((x) => x.byBoat && (x.stage === 'rowing-in' || x.stage === 'rowing-out'));
     if (pier && !boating && Math.random() < 0.6) {
       // Row in to the end of the pier.
@@ -203,9 +199,10 @@ export class Visitors {
         new THREE.Vector3(6, 0, 3.6),
       ];
     } else {
-      const left = Math.random() < 0.5;
-      const start = left ? new THREE.Vector3(-23, 0, 3.4) : new THREE.Vector3(23, 0, 3.6);
-      v.home = [start, left ? new THREE.Vector3(-3.4, 0, 3.0) : new THREE.Vector3(4.2, 0, 3.4)];
+      const routes = this.beach.walkRoutes();
+      const route = routes[Math.floor(Math.random() * routes.length)];
+      v.home = route.map(([x, z]) => new THREE.Vector3(x, 0, z));
+      const start = v.home[0];
       look.group.position.copy(start);
       this.root.add(look.group);
       v.path = v.home.slice(1).map((p) => p.clone());
@@ -286,7 +283,8 @@ export class Visitors {
         break;
       case 'queue': {
         const i = this.queueIndex(v);
-        const [qx, qz] = QUEUE[Math.min(i, QUEUE.length - 1)];
+        const q = this.beach.queue;
+        const [qx, qz] = q[Math.min(i, q.length - 1)];
         const spot = new THREE.Vector3(qx, 0, qz);
         if (v.rig.group.position.distanceTo(spot.clone().setY(v.rig.group.position.y)) > 0.1) {
           v.path = [spot];
@@ -294,7 +292,7 @@ export class Visitors {
         } else {
           v.path = [];
           v.rig.walking = false;
-          v.rig.face(new THREE.Vector3(0, 0, -3));
+          v.rig.face(new THREE.Vector3(this.beach.workerAt[0], 0, this.beach.workerAt[2]));
         }
         if (i === 0 && v.path.length === 0) {
           v.timer += dt;

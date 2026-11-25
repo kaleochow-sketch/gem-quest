@@ -6,13 +6,13 @@
 import { BoosterId } from './upgrades.js';
 import type { Profile } from './save.js';
 import { LEVELS_PER_REGION, TOTAL_LEVELS } from './levels.js';
-import { CAFE_TASKS, cafeState } from './cafe.js';
+import { placeFor } from './places.js';
 
 /**
- * Projects with a 3D place are restored through its own job list instead
- * of the seven diorama steps. Only the café has one so far.
+ * Every region's project is a 3D place restored through its own job list
+ * (the seven diorama steps remain as a fallback without 3D support).
  */
-export const HAS_3D = new Set([0]);
+export const HAS_3D = new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
 
 export interface BuildStep {
   name: string;
@@ -207,14 +207,14 @@ export function projectReward(region: number): { coins: number; item: BoosterId 
   return { coins: Math.round((600 * (1 + region * 0.25)) / 10) * 10, item: 'rainbowStart' };
 }
 
-/** Pieces (or, for 3D places, jobs) in a project. */
+/** Jobs in a project's 3D place. */
 export function projectSize(index: number): number {
-  return index === 0 ? CAFE_TASKS.length : PROJECTS[index].steps.length;
+  return placeFor(index).tasks.length;
 }
 
 export function stepsBuilt(profile: Profile, index: number): number {
-  if (index === 0) return cafeState(profile).done.length;
-  return Math.min(PROJECTS[index].steps.length, profile.build?.[PROJECTS[index].id] ?? 0);
+  const place = placeFor(index);
+  return Math.min(place.tasks.length, place.state(profile).done.length);
 }
 
 export function isComplete(profile: Profile, index: number): boolean {

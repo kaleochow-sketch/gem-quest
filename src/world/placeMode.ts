@@ -6,30 +6,11 @@
  */
 import * as THREE from 'three';
 import { audio } from '../audio/audio.js';
-import {
-  CAFE_TASKS,
-  COOK_BATCH,
-  CafeTask,
-  ONIGIRI_PRICE,
-  STAGES,
-  STOCK_MAX,
-  WORKER_COST,
-  cafeLife,
-  cafeState,
-  choiceOf,
-  currentStage,
-  dailyLeft,
-  doTask,
-  grantDecor,
-  openTasks,
-  rollDecor,
-  taskCost,
-  useDaily,
-} from '../game/cafe.js';
-import { Profile, today } from '../game/save.js';
-import { Beach, PIER, Spot } from './beach.js';
+import { PlaceData, PlaceTask, markSlept, sleptToday } from '../game/places.js';
+import type { Profile } from '../game/save.js';
 import { World, WorldMode } from './engine.js';
 import { ball, burst, makeMarker, mat, popIn } from './models.js';
+import type { Site, Spot } from './site.js';
 import { Visitors, floatText } from './visitors.js';
 
 /** Something the dog can do right now, shown as a button (E for the first). */
@@ -40,7 +21,7 @@ interface Action {
   disabled?: boolean;
 }
 
-export interface CafeDeps {
+export interface PlaceDeps {
   profile(): Profile;
   save(): void;
   refreshWallet(): void;
@@ -55,7 +36,7 @@ export interface CafeDeps {
 
 const KIND_LABEL: Record<string, string> = { clean: 'Clean up', repair: 'Repair', paint: 'Paint', build: 'Build' };
 
-export class CafeMode implements WorldMode {
+export class PlaceMode implements WorldMode {
   /** Left half of the screen is a joystick on touch; WASD on keyboards. */
   readonly controls = 'half' as const;
   private world!: World;
@@ -76,14 +57,14 @@ export class CafeMode implements WorldMode {
     }
   };
 
-  constructor(private beach: Beach, private deps: CafeDeps) {}
+  constructor(private site: Site, private data: PlaceData, private deps: PlaceDeps) {}
 
   enter(world: World): void {
     this.world = world;
-    world.bounds = (p) => this.beach.clamp(p);
+    world.bounds = (p) => this.site.clamp(p);
     world.topbar.innerHTML = `
       <button class="icon-btn" id="w-back" type="button" aria-label="Back">←</button>
-      <div class="world-title"><strong>Seaside Onigiri Café</strong><small id="w-stage"></small></div>
+      <div class="world-title"><strong>${this.data.name}</strong><small id="w-stage"></small></div>
       <button class="icon-btn" id="w-time" type="button" aria-label="Change time of day">☀️</button>
       <div class="chip chip-gold"><span class="coin"></span><span id="w-coins">0</span></div>`;
     world.hud.innerHTML = `
@@ -113,13 +94,13 @@ export class CafeMode implements WorldMode {
     window.setTimeout(() => $('w-hint')?.classList.add('fade'), 6000);
 
     // Start the dog in front of the shack, looking at it.
-    world.dog.group.position.set(0, 0, 3);
+    world.dog.group.position.set(this.site.start[0], 0, this.site.start[1]);
     world.dog.stop();
     world.dog.pose = null;
     window.addEventListener('keydown', this.keyHandler);
-    this.visitors = new Visitors(world, this.beach, {
-      open: () => cafeState(this.deps.profile()).done.includes('counter'),
-      hasWorker: () => cafeLife(this.deps.profile()).worker,
+    this.visitors = new Visitors(world, this.site, {
+      open: () => this.data.state(this.deps.profile()).done.includes('counter'),
+      hasWorker: () => this.data.life(this.deps.profile()).worker,
       sold: (byWorker, at) => this.sold(byWorker, at),
       leftHungry: () => this.say('Oh no, they got tired of waiting! Serve at the counter, or hire a worker.'),
     });
@@ -127,7 +108,7 @@ export class CafeMode implements WorldMode {
     world.pitch = 0.38;
     world.dist = 12;
     this.refresh();
-    const state = cafeState(this.deps.profile());
+    const state = this.data.state(this.deps.profile());
     if (!state.done.length) {
       this.say('Oh no, look at this place! Let’s fix it up together. Tap a ❗ to start.', 7000);
     }
@@ -165,7 +146,7 @@ export class CafeMode implements WorldMode {
     this.closeSheet();
     if (this.fishing) return;
     const p = hit.point.clone();
-    this.beach.clamp(p);
+    this.site.clamp(p);
     this.world.dog.goTo(p);
   }
 
@@ -176,36 +157,36 @@ export class CafeMode implements WorldMode {
   /** Rebuilds the café and the HUD from the save. */
   private refresh(preview?: { task: string; swatch: string }): void {
     const profile = this.deps.profile();
-    const state = cafeState(profile);
-    this.beach.build(state, preview);
-    this.world.tappables = [this.beach.cafe, ...this.markers];
+    const state = this.data.state(profile);
+    this.site.build(state, preview);
+    this.world.tappables = [this.site.content, ...this.markers];
 
     // Anything painted can be tapped to change its colour.
-    for (const [task, obj] of this.beach.paintable) {
-      obj.userData.onTap = () => this.openTask(CAFE_TASKS.find((t) => t.id === task)!, true);
+    for (const [task, obj] of this.site.paintable) {
+      obj.userData.onTap = () => this.openTask(this.data.tasks.find((t) => t.id === task)!, true);
     }
 
     if (preview) return;
     for (const m of this.markers) this.world.scene.remove(m);
-    this.markers = openTasks(state).map((task) => {
+    this.markers = this.data.open(state).map((task) => {
       const m = makeMarker(task.icon);
-      const y = this.beach.groundAt(task.spot[0], task.spot[1]);
+      const y = this.site.groundAt(task.spot[0], task.spot[1]);
       m.position.set(task.spot[0], y + 2.6, task.spot[1]);
       m.userData.baseY = y + 2.6;
       m.userData.onTap = () => this.goDo(task);
       this.world.scene.add(m);
       return m;
     });
-    this.world.tappables = [this.beach.cafe, ...this.markers];
+    this.world.tappables = [this.site.content, ...this.markers];
 
-    const stage = currentStage(state);
+    const stage = this.data.stage(state);
     const $ = (id: string) => this.world.root.querySelector<HTMLElement>(`#${id}`);
-    const stageText = stage >= STAGES.length ? 'All done — open for business!' : `Stage ${stage + 1} of ${STAGES.length} · ${STAGES[stage]}`;
+    const stageText = stage >= this.data.stages.length ? 'All done — open for business!' : `Stage ${stage + 1} of ${this.data.stages.length} · ${this.data.stages[stage]}`;
     $('w-stage')!.textContent = stageText;
-    const pct = Math.round((state.done.length / CAFE_TASKS.length) * 100);
+    const pct = Math.round((state.done.length / this.data.tasks.length) * 100);
     $('w-progress')!.style.width = `${pct}%`;
-    $('w-progress-text')!.textContent = `${state.done.length} / ${CAFE_TASKS.length} jobs`;
-    const open = openTasks(state).length;
+    $('w-progress-text')!.textContent = `${state.done.length} / ${this.data.tasks.length} jobs`;
+    const open = this.data.open(state).length;
     $('w-tasks')!.textContent = open ? `📋 Jobs (${open})` : '📋 Jobs';
     $('w-coins')!.textContent = profile.infiniteCoins ? '∞' : profile.coins.toLocaleString();
   }
@@ -239,18 +220,18 @@ export class CafeMode implements WorldMode {
   /** The list of jobs open right now. */
   private showList(): void {
     const profile = this.deps.profile();
-    const state = cafeState(profile);
-    const tasks = openTasks(state);
-    const stage = currentStage(state);
+    const state = this.data.state(profile);
+    const tasks = this.data.open(state);
+    const stage = this.data.stage(state);
     const s = this.sheet();
     s.hidden = false;
     s.innerHTML = `
-      <div class="sheet-head"><strong>${stage < STAGES.length ? STAGES[stage] : 'All jobs done!'}</strong><button class="sheet-x" id="s-x" type="button">✕</button></div>
+      <div class="sheet-head"><strong>${stage < this.data.stages.length ? this.data.stages[stage] : 'All jobs done!'}</strong><button class="sheet-x" id="s-x" type="button">✕</button></div>
       ${
         tasks.length
           ? tasks
               .map((t) => {
-                const cost = taskCost(t.id);
+                const cost = this.data.cost(t.id);
                 const afford = profile.infiniteCoins || profile.coins >= cost;
                 return `<div class="job" data-job="${t.id}">
                   <span class="job-icon">${t.icon}</span>
@@ -259,9 +240,9 @@ export class CafeMode implements WorldMode {
                 </div>`;
               })
               .join('')
-          : '<p class="panel-blurb">The café is finished. Come back any time — and try it at night!</p>'
+          : `<p class="panel-blurb">${this.data.name} is finished. Come back any time — and try it at night!</p>`
       }
-      ${stage < STAGES.length - 1 ? `<p class="sheet-note">Finish these to unlock <strong>${STAGES[stage + 1]}</strong>.</p>` : ''}`;
+      ${stage < this.data.stages.length - 1 ? `<p class="sheet-note">Finish these to unlock <strong>${this.data.stages[stage + 1]}</strong>.</p>` : ''}`;
     s.querySelector('#s-x')!.addEventListener('click', () => this.closeSheet());
     s.querySelectorAll<HTMLElement>('[data-job]').forEach((el) =>
       el.addEventListener('click', () => {
@@ -273,25 +254,25 @@ export class CafeMode implements WorldMode {
   }
 
   /** Sends the dog to a job, then opens it. */
-  private goDo(task: CafeTask): void {
+  private goDo(task: PlaceTask): void {
     if (this.busy) return;
     this.closeSheet();
     const to = new THREE.Vector3(task.spot[0], 0, task.spot[1]);
-    this.beach.clamp(to);
+    this.site.clamp(to);
     audio.sfx('tap');
     this.world.dog.goTo(to, () => this.openTask(task, false));
   }
 
   /** The job card: cost, colour choices with live preview, and the button. */
-  private openTask(task: CafeTask, repaint: boolean): void {
+  private openTask(task: PlaceTask, repaint: boolean): void {
     if (this.busy) return;
     const profile = this.deps.profile();
-    const state = cafeState(profile);
+    const state = this.data.state(profile);
     if (repaint && !task.swatches) return;
     const done = state.done.includes(task.id);
     if (!repaint && done) return;
-    const cost = taskCost(task.id);
-    let chosen = (choiceOf(state, task.id) ?? task.swatches?.[0])?.id ?? '';
+    const cost = this.data.cost(task.id);
+    let chosen = (this.data.choice(state, task.id) ?? task.swatches?.[0])?.id ?? '';
     const s = this.sheet();
     s.hidden = false;
     s.innerHTML = `
@@ -337,7 +318,7 @@ export class CafeMode implements WorldMode {
         state.choice[task.id] = chosen;
         this.deps.save();
         this.refresh();
-        const obj = this.beach.paintable.get(task.id);
+        const obj = this.site.paintable.get(task.id);
         if (obj) burst(this.world.scene, this.world.animators, obj.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 1, 0)), '#ffffff', 20, 3);
         audio.sfx('special');
         this.say('Fresh paint! Looking good.');
@@ -351,17 +332,17 @@ export class CafeMode implements WorldMode {
    * Shows a not-yet-built thing in its colour by rebuilding as if the job
    * were done, so the player sees exactly what they are buying.
    */
-  private previewUnbuilt(task: CafeTask, chosen: string): void {
-    const state = cafeState(this.deps.profile());
+  private previewUnbuilt(task: PlaceTask, chosen: string): void {
+    const state = this.data.state(this.deps.profile());
     const ghost = { done: [...state.done, task.id], choice: { ...state.choice, [task.id]: chosen }, decor: state.decor };
-    this.beach.build(ghost);
-    this.world.tappables = [this.beach.cafe, ...this.markers];
+    this.site.build(ghost);
+    this.world.tappables = [this.site.content, ...this.markers];
   }
 
   /** Pays, plays the work animation, then reveals the result. */
-  private perform(task: CafeTask, choice?: string): void {
+  private perform(task: PlaceTask, choice?: string): void {
     const profile = this.deps.profile();
-    const result = doTask(profile, task.id, choice);
+    const result = this.data.doTask(profile, task.id, choice);
     if (!result.ok) {
       audio.sfx('invalid');
       this.refresh();
@@ -380,20 +361,20 @@ export class CafeMode implements WorldMode {
     this.deps.refreshWallet();
     this.busy = true;
     // Rebuild the current (pre-task) look, then animate the change.
-    const state = cafeState(profile);
+    const state = this.data.state(profile);
     const before = { ...state, done: state.done.filter((d) => d !== task.id) };
-    this.beach.build(before);
-    const at = new THREE.Vector3(task.spot[0], this.beach.groundAt(task.spot[0], task.spot[1]) + 0.4, task.spot[1]);
+    this.site.build(before);
+    const at = new THREE.Vector3(task.spot[0], this.site.groundAt(task.spot[0], task.spot[1]) + 0.4, task.spot[1]);
     const dog = this.world.dog;
     dog.dig(1.3);
     audio.sfx(task.kind === 'clean' ? 'crate' : 'scoot');
-    const dust = task.kind === 'clean' ? '#e8cf98' : task.kind === 'paint' ? choiceOf(state, task.id)?.color ?? '#ffd15c' : '#ffd15c';
+    const dust = task.kind === 'clean' ? '#e8cf98' : task.kind === 'paint' ? this.data.choice(state, task.id)?.color ?? '#ffd15c' : '#ffd15c';
     burst(this.world.scene, this.world.animators, at, dust, 24, 2.5);
     window.setTimeout(() => burst(this.world.scene, this.world.animators, at, dust, 18, 3), 500);
 
     window.setTimeout(() => {
       this.refresh();
-      const obj = this.beach.paintable.get(task.id);
+      const obj = this.site.paintable.get(task.id);
       if (obj && task.kind !== 'clean') popIn(obj, this.world.animators);
       burst(this.world.scene, this.world.animators, at.clone().add(new THREE.Vector3(0, 0.8, 0)), '#ffe27a', 30, 4);
       audio.sfx(task.kind === 'clean' ? 'match' : 'special');
@@ -424,17 +405,17 @@ export class CafeMode implements WorldMode {
 
   /** A sale at the counter: the dog's go to you, the worker's to the tip jar. */
   private sold(byWorker: boolean, at: THREE.Vector3): void {
-    const life = cafeLife(this.deps.profile());
+    const life = this.data.life(this.deps.profile());
     life.sold++;
     if (byWorker) {
-      life.bank += ONIGIRI_PRICE;
-      floatText(this.world, at, `+${ONIGIRI_PRICE} 🫙`, '#ffffff');
+      life.bank += this.data.product.price;
+      floatText(this.world, at, `+${this.data.product.price} 🫙`, '#ffffff');
       this.deps.save();
       return;
     }
     life.stock = Math.max(0, life.stock - 1);
     const tip = Math.floor(Math.random() * 7);
-    this.gain(ONIGIRI_PRICE + tip, at, tip ? `+${ONIGIRI_PRICE + tip} (tip!)` : undefined);
+    this.gain(this.data.product.price + tip, at, tip ? `+${this.data.product.price + tip} (tip!)` : undefined);
   }
 
   /** The spot the dog is standing at, if any. */
@@ -442,7 +423,7 @@ export class CafeMode implements WorldMode {
     const p = this.world.dog.group.position;
     let best: Spot | null = null;
     let bestD = Infinity;
-    for (const s of this.beach.spots) {
+    for (const s of this.site.spots) {
       const d = Math.hypot(p.x - s.x, p.z - s.z);
       if (d < s.r && d < bestD) {
         best = s;
@@ -454,7 +435,8 @@ export class CafeMode implements WorldMode {
 
   private actionsFor(spot: Spot | null): Action[] {
     const profile = this.deps.profile();
-    const life = cafeLife(profile);
+    const life = this.data.life(profile);
+    const prod = this.data.product;
     if (this.fishing) {
       return [{ label: this.fishing.bite > 0 && !this.fishing.done ? '❗ Pull!' : '🎣 Waiting for a bite…', run: () => this.pull() }];
     }
@@ -464,61 +446,57 @@ export class CafeMode implements WorldMode {
     }
     if (!spot) return [];
     switch (spot.kind) {
-      case 'hammock': {
-        const slept = life.slept === today();
-        return slept
-          ? [{ label: '💤 Already slept today', disabled: true }, { label: '🧺 Lie down', run: () => this.lieInHammock(false) }]
-          : [{ label: '💤 Sleep until morning', run: () => this.lieInHammock(true) }];
-      }
+      case 'hammock':
+        return sleptToday(profile)
+          ? [{ label: '💤 Already slept today', disabled: true }, { label: '🛏️ Lie down', run: () => this.lieDown(spot, false) }]
+          : [{ label: '💤 Sleep until morning', run: () => this.lieDown(spot, true) }];
       case 'counter': {
         const out: Action[] = [];
-        const front = this.visitors.front();
-        if (front) {
+        if (this.visitors.front()) {
           out.push(
             life.stock > 0
-              ? { label: `🍙 Serve (+${ONIGIRI_PRICE})`, run: () => this.serve() }
-              : { label: '🍙 Out of onigiri — cook rice!', disabled: true },
+              ? { label: `${prod.icon} Serve (+${prod.price})`, run: () => this.serve(spot) }
+              : { label: `${prod.icon} Out of ${prod.name} — ${prod.make.toLowerCase()}!`, disabled: true },
           );
         } else if (!life.worker) {
           out.push({ label: 'Waiting for customers…', disabled: true });
         }
-        if (!life.worker) {
-          out.push({ label: `🧑‍🍳 Hire a worker · ${WORKER_COST.toLocaleString()}`, run: () => this.hire() });
-        } else if (life.bank > 0) {
-          out.push({ label: `🫙 Collect tips (+${life.bank})`, run: () => this.collect() });
-        } else {
-          out.push({ label: '🧑‍🍳 Your worker is on duty', disabled: true });
-        }
+        if (!life.worker) out.push({ label: `🧑‍🍳 Hire a worker · ${this.data.workerCost.toLocaleString()}`, run: () => this.hire() });
+        else if (life.bank > 0) out.push({ label: `🫙 Collect tips (+${life.bank})`, run: () => this.collect(spot) });
+        else out.push({ label: '🧑‍🍳 Your worker is on duty', disabled: true });
         return out;
       }
       case 'kitchen':
-        return life.stock >= STOCK_MAX
-          ? [{ label: `🍚 Stock full (${life.stock})`, disabled: true }]
-          : [{ label: `🍚 Cook rice (${life.stock}/${STOCK_MAX} onigiri)`, run: () => this.cook() }];
+        return life.stock >= prod.max
+          ? [{ label: `${prod.icon} Fully stocked (${life.stock})`, disabled: true }]
+          : [{ label: `🍳 ${prod.make} (${life.stock}/${prod.max})`, run: () => this.cook(spot) }];
       case 'bonfire':
-        return dailyLeft(profile, 'bonfire', 1)
-          ? [{ label: '🔥 Roast a marshmallow', run: () => this.roast() }]
+        return this.data.dailyLeft(profile, 'bonfire', 1)
+          ? [{ label: '🔥 Roast a marshmallow', run: () => this.roast(spot) }]
           : [{ label: '🔥 Sit by the fire', run: () => this.sitBy(spot) }];
       case 'palm':
-        return dailyLeft(profile, spot.key, 1)
-          ? [{ label: '🥥 Shake the palm', run: () => this.shake(spot) }]
-          : [{ label: '🥥 No coconuts left today', disabled: true }];
+      case 'gather':
+        return this.data.dailyLeft(profile, spot.key, 1)
+          ? [{ label: `${spot.icon ?? '🌿'} ${spot.label ?? 'Gather'}`, run: () => this.gather(spot) }]
+          : [{ label: `${spot.icon ?? '🌿'} Come back tomorrow`, disabled: true }];
       case 'pier': {
-        const left = dailyLeft(profile, 'fish', 3);
+        const left = this.data.dailyLeft(profile, 'fish', 3);
         return left
-          ? [{ label: `🎣 Fish (${left} left today)`, run: () => this.fish() }]
+          ? [{ label: `🎣 Fish (${left} left today)`, run: () => this.fish(spot) }]
           : [{ label: '🎣 No more bites today', disabled: true }];
       }
       case 'boat':
-        return [{ label: '🛶 Hop in', run: () => this.pin('boat', new THREE.Vector3(9, 0.38, 5.6), new THREE.Vector3(10.9, 0, 4.0), 'sit', 0.5) }];
+        return [{ label: '🛶 Hop in', run: () => this.rest(spot, 'boat', 'sit') }];
       case 'lounger':
         return [{ label: '☀️ Sunbathe', run: () => this.sunbathe(spot) }];
       case 'tower':
-        return [{ label: '🔭 Climb up', run: () => this.climb() }];
+        return [{ label: '🔭 Climb up', run: () => this.climb(spot) }];
       case 'table':
         return [{ label: '🪑 Sit down', run: () => this.sitAtTable(spot) }];
       case 'flowers':
         return [{ label: '🌺 Smell the flowers', run: () => this.smell(spot) }];
+      case 'landmark':
+        return [{ label: `${spot.icon ?? '✨'} ${spot.label ?? 'Admire it'}`, run: () => this.admire(spot) }];
     }
     return [];
   }
@@ -557,26 +535,31 @@ export class CafeMode implements WorldMode {
     this.actionTick = 0;
   }
 
+  private at(spot: Spot, lift = 0): THREE.Vector3 {
+    return new THREE.Vector3(spot.x, this.site.groundAt(spot.x, spot.z) + lift, spot.z);
+  }
+
   /* --- the counter ---------------------------------------------------- */
 
-  private serve(): void {
-    const life = cafeLife(this.deps.profile());
+  private serve(spot: Spot): void {
+    const life = this.data.life(this.deps.profile());
     if (life.stock <= 0) return;
-    this.world.dog.face(new THREE.Vector3(0, 0, 0));
+    this.world.dog.face(this.at(spot));
     this.world.jump();
     this.visitors.serve();
-    if (life.stock === 3) this.say('Running low on onigiri — cook more rice at the kitchen!');
+    if (life.stock === 3) this.say(`Running low on ${this.data.product.name} — ${this.data.product.make.toLowerCase()} at the station!`);
   }
 
   private hire(): void {
     const profile = this.deps.profile();
-    if (!profile.infiniteCoins && profile.coins < WORKER_COST) {
-      this.say(`A worker costs ${WORKER_COST.toLocaleString()} coins. Play some levels and come back!`);
+    const cost = this.data.workerCost;
+    if (!profile.infiniteCoins && profile.coins < cost) {
+      this.say(`A worker costs ${cost.toLocaleString()} coins. Play some levels and come back!`);
       audio.sfx('invalid');
       return;
     }
-    if (!profile.infiniteCoins) profile.coins -= WORKER_COST;
-    const life = cafeLife(profile);
+    if (!profile.infiniteCoins) profile.coins -= cost;
+    const life = this.data.life(profile);
     life.worker = true;
     life.tick = Date.now();
     this.coinsChanged();
@@ -584,66 +567,67 @@ export class CafeMode implements WorldMode {
     this.say('Welcome aboard! They will run the counter — and keep earning while we are away. Check the tip jar!', 6000);
   }
 
-  private collect(): void {
-    const life = cafeLife(this.deps.profile());
+  private collect(spot: Spot): void {
+    const life = this.data.life(this.deps.profile());
     if (life.bank <= 0) return;
     const coins = life.bank;
     life.bank = 0;
-    this.gain(coins, new THREE.Vector3(0, 2.6, -1.4), `+${coins} 🫙`);
-    burst(this.world.scene, this.world.animators, new THREE.Vector3(0, 1.8, -1.6), '#ffd23f', 24, 3);
+    this.gain(coins, this.at(spot, 2.6), `+${coins} 🫙`);
+    burst(this.world.scene, this.world.animators, this.at(spot, 1.8), '#ffd23f', 24, 3);
   }
 
-  private cook(): void {
-    const life = cafeLife(this.deps.profile());
+  private cook(spot: Spot): void {
+    const life = this.data.life(this.deps.profile());
     const dog = this.world.dog;
-    dog.face(new THREE.Vector3(2.7, 0, -3.4));
+    dog.face(this.at(spot));
     dog.dig(1.2);
     this.busy = true;
     audio.sfx('scoot');
-    const at = new THREE.Vector3(2.7, 1.9, -3.4);
+    const at = this.at(spot, 1.9);
     burst(this.world.scene, this.world.animators, at, '#ffffff', 18, 1.6);
     window.setTimeout(() => {
-      life.stock = Math.min(STOCK_MAX, life.stock + COOK_BATCH);
+      life.stock = Math.min(this.data.product.max, life.stock + this.data.product.batch);
       this.deps.save();
-      floatText(this.world, at, `+${COOK_BATCH} 🍙`, '#ffffff');
+      floatText(this.world, at, `+${this.data.product.batch} ${this.data.product.icon}`, '#ffffff');
       audio.sfx('special');
       this.busy = false;
-      this.say('Fluffy rice, perfectly shaped. Ready to sell!');
+      this.say(`Fresh ${this.data.product.name}, ready to sell!`);
     }, 1200);
   }
 
   /* --- little pleasures -------------------------------------------------- */
 
-  private roast(): void {
-    if (!useDaily(this.deps.profile(), 'bonfire', 1)) return;
-    this.sitBy(this.beach.spots.find((s) => s.kind === 'bonfire')!);
+  private roast(spot: Spot): void {
+    if (!this.data.useDaily(this.deps.profile(), 'bonfire', 1)) return;
+    this.sitBy(spot);
     window.setTimeout(() => {
-      this.gain(25, new THREE.Vector3(-7, 2.2, 6));
+      this.gain(25, this.at(spot, 2.2));
       this.say('Golden and gooey. Best marshmallow ever!');
     }, 900);
   }
 
   private sitBy(spot: Spot): void {
     const dog = this.world.dog;
-    dog.face(new THREE.Vector3(spot.x, 0, spot.z));
+    dog.face(this.at(spot));
     dog.pose = 'sit';
   }
 
-  private shake(spot: Spot): void {
-    if (!useDaily(this.deps.profile(), spot.key, 1)) return;
+  /** Shake a tree, pick berries, chip a crystal… once per spot per day. */
+  private gather(spot: Spot): void {
+    if (!this.data.useDaily(this.deps.profile(), spot.key, 1)) return;
     const dog = this.world.dog;
-    dog.face(new THREE.Vector3(spot.x, 0, spot.z));
+    dog.face(this.at(spot));
     this.world.jump();
     audio.sfx('crate');
-    // A coconut drops from the crown and bounces.
-    const nut = ball(0.16, mat('#6b4a2b', 0.8), 12);
+    const reward = Math.round((spot.reward ?? 10) * (1 + this.data.region * 0.25));
+    // Something drops and bounces.
+    const nut = ball(0.16, mat(spot.kind === 'palm' ? '#6b4a2b' : '#ffd23f', 0.6), 12);
     nut.castShadow = true;
-    const start = new THREE.Vector3(spot.x + 0.3, 5, spot.z + 0.2);
-    nut.position.copy(start);
+    nut.position.set(spot.x + 0.3, this.site.groundAt(spot.x, spot.z) + 3.5, spot.z + 0.2);
     this.world.scene.add(nut);
     let v = 0;
     let bounces = 0;
-    const ground = this.beach.groundAt(spot.x + 0.6, spot.z + 0.6) + 0.16;
+    const ground = this.site.groundAt(spot.x + 0.6, spot.z + 0.6) + 0.16;
     const fn = (dt: number) => {
       v -= 14 * dt;
       nut.position.y += v * dt;
@@ -654,7 +638,7 @@ export class CafeMode implements WorldMode {
         bounces++;
         if (bounces === 1) {
           audio.sfx('tap');
-          this.gain(10, nut.position.clone().add(new THREE.Vector3(0, 1, 0)), '+10 🥥');
+          this.gain(reward, nut.position.clone().add(new THREE.Vector3(0, 1, 0)), `+${reward} ${spot.icon ?? ''}`);
         }
         if (bounces > 2) {
           this.world.animators.delete(fn);
@@ -667,11 +651,19 @@ export class CafeMode implements WorldMode {
 
   private smell(spot: Spot): void {
     const dog = this.world.dog;
-    dog.face(new THREE.Vector3(spot.x, 0, spot.z));
+    dog.face(this.at(spot));
     dog.dig(0.6);
-    const color = choiceOf(cafeState(this.deps.profile()), 'flowers')?.color ?? '#ff5a6e';
-    burst(this.world.scene, this.world.animators, new THREE.Vector3(spot.x, 1, spot.z), color, 16, 1.8);
+    const color = this.data.choice(this.data.state(this.deps.profile()), 'flowers')?.color ?? '#ff5a6e';
+    burst(this.world.scene, this.world.animators, this.at(spot, 1), color, 16, 1.8);
     const lines = ['Mmm, lovely!', 'Achoo! …Worth it.', 'Smells like sunshine.', 'These are my favourite.'];
+    this.say(lines[Math.floor(Math.random() * lines.length)]);
+  }
+
+  private admire(spot: Spot): void {
+    this.sitBy(spot);
+    burst(this.world.scene, this.world.animators, this.at(spot, 2), '#ffe27a', 20, 2.5);
+    audio.sfx('star');
+    const lines = ['Wow. Just… wow.', 'We built that. Together!', 'I could look at this all day.'];
     this.say(lines[Math.floor(Math.random() * lines.length)]);
   }
 
@@ -690,6 +682,13 @@ export class CafeMode implements WorldMode {
     audio.sfx('swap');
   }
 
+  /** Rests on a spot that carries its own seat and exit. */
+  private rest(spot: Spot, kind: string, pose: 'sit' | 'lie'): void {
+    const at = spot.at ? new THREE.Vector3(...spot.at) : this.at(spot, 0.4);
+    const exit = spot.exit ? new THREE.Vector3(spot.exit[0], 0, spot.exit[1]) : this.at(spot).add(new THREE.Vector3(1.4, 0, 1.4));
+    this.pin(kind, at, exit, pose, spot.facing ?? 0);
+  }
+
   private updatePin(): void {
     if (!this.pinned) return;
     // Any movement (keys, joystick, a tap) gets the dog up.
@@ -700,20 +699,20 @@ export class CafeMode implements WorldMode {
     if (!this.pinned) return;
     const { exit, kind } = this.pinned;
     this.pinned = null;
-    this.world.bounds = (p) => this.beach.clamp(p);
+    this.world.bounds = (p) => this.site.clamp(p);
     const dog = this.world.dog;
     dog.pose = null;
     // Getting up on purpose steps off at the exit spot; walking away just
     // carries on from where the dog was.
     if (place && !dog.moving) {
       dog.group.position.copy(exit);
-      this.beach.clamp(dog.group.position);
+      this.site.clamp(dog.group.position);
     }
     if (kind === 'tower') this.world.dist = 12;
   }
 
   private sunbathe(spot: Spot): void {
-    this.pin('lounger', new THREE.Vector3(spot.x, this.beach.groundAt(spot.x, spot.z) + 0.55, spot.z), new THREE.Vector3(spot.x - 1.3, 0, spot.z), 'lie', Math.PI + 0.25);
+    this.rest(spot, 'lounger', 'lie');
     this.say('Ahh, warm sun. Just five more minutes…');
     // A sunny nap moves the day along a couple of hours.
     window.setTimeout(() => {
@@ -721,37 +720,35 @@ export class CafeMode implements WorldMode {
     }, 2500);
   }
 
-  private climb(): void {
-    this.pin('tower', new THREE.Vector3(-10.5, sandYAt(this.beach, -10.5, 6.4) + 2.48, 6.6), new THREE.Vector3(-10.5, 0, 4.6), 'sit', 0);
+  private climb(spot: Spot): void {
+    this.rest(spot, 'tower', 'sit');
     this.world.dist = 18;
-    this.say('What a view! I can see boats coming in from here.');
+    this.say('What a view! I can see for miles from up here.');
   }
 
   private sitAtTable(spot: Spot): void {
-    const seat = this.beach.seats.findIndex(
+    const seat = this.site.seats.findIndex(
       (s, i) => Math.hypot(s.x - spot.x, s.z - spot.z) < 1.4 && !this.visitors.seatTaken(i),
     );
     if (seat < 0) {
       this.say('All the stools are taken!');
       return;
     }
-    const s = this.beach.seats[seat];
+    const s = this.site.seats[seat];
     this.pin('table', new THREE.Vector3(s.x, s.y - 0.35, s.z), new THREE.Vector3(s.x + (s.x - spot.x), 0, s.z + (s.z - spot.z)), 'sit', s.facing);
   }
 
   /* --- sleeping ------------------------------------------------------------ */
 
-  private lieInHammock(sleep: boolean): void {
-    const at = new THREE.Vector3(-12, sandYAt(this.beach, -12, -4.4) + 0.85, -4.4);
-    this.pin('hammock', at, new THREE.Vector3(-12, 0, -2.8), 'lie', 0.2 + Math.PI / 2);
+  private lieDown(spot: Spot, sleep: boolean): void {
+    this.rest(spot, 'hammock', 'lie');
     if (!sleep) {
-      this.say('Swing, swing… so comfy.');
+      this.say('So comfy…');
       return;
     }
     const profile = this.deps.profile();
-    const life = cafeLife(profile);
-    if (life.slept === today()) return;
-    life.slept = today();
+    if (sleptToday(profile)) return;
+    markSlept(profile);
     const fade = this.world.root.querySelector<HTMLElement>('#w-fade')!;
     fade.classList.add('on');
     fade.textContent = 'Zzz…';
@@ -760,7 +757,7 @@ export class CafeMode implements WorldMode {
     window.setTimeout(() => {
       // A new day: morning light, and the daily things are fresh again.
       this.world.time = 0.27;
-      life.used = {};
+      this.data.life(profile).used = {};
       if (profile.fun) profile.fun.played = {};
       this.deps.save();
       this.deps.refreshWallet();
@@ -770,22 +767,24 @@ export class CafeMode implements WorldMode {
       fade.classList.remove('on');
       this.busy = false;
       this.unpin(true);
-      this.say('Good morning! A fresh day: the daily games, the Treat Wheel, coconuts and fishing are all back. (One sleep a day.)', 7000);
+      this.say('Good morning! A fresh day: the daily games, the Treat Wheel and today’s little jobs are all back. (One sleep a day.)', 7000);
     }, 3200);
   }
 
   /* --- fishing ------------------------------------------------------------- */
 
-  private fish(): void {
-    if (!useDaily(this.deps.profile(), 'fish', 3)) return;
+  private fish(spot: Spot): void {
+    if (!this.data.useDaily(this.deps.profile(), 'fish', 3)) return;
     const dog = this.world.dog;
-    this.pin('pier', new THREE.Vector3(13, PIER.deck, 18.6), new THREE.Vector3(13, PIER.deck, 17.6), 'sit', 0);
-    dog.face(new THREE.Vector3(13, 0, 30));
+    this.rest(spot, 'pier', 'sit');
+    const bobAt = spot.bob ? new THREE.Vector3(...spot.bob) : this.at(spot).add(new THREE.Vector3(0, -0.25, 3));
+    dog.face(bobAt);
     const bob = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 8), mat('#ff5a4e', 0.5));
     const top = new THREE.Mesh(new THREE.SphereGeometry(0.08, 10, 6), mat('#ffffff', 0.5));
     top.position.y = 0.09;
     bob.add(top);
-    bob.position.set(13.2, -0.25, 22.5);
+    bob.position.copy(bobAt);
+    bob.userData.y = bobAt.y;
     this.world.scene.add(bob);
     this.fishing = { bob, bite: -(1.6 + Math.random() * 2.6), window: 0, done: false };
     this.say('Shh… waiting for a nibble.');
@@ -794,21 +793,22 @@ export class CafeMode implements WorldMode {
 
   private updateFishing(dt: number, t: number): void {
     const f = this.fishing;
-    if (!f) return;
-    if (f.done) return;
+    if (!f || f.done) return;
+    const y = f.bob.userData.y as number;
     if (f.bite < 0) {
       f.bite += dt;
-      f.bob.position.y = -0.25 + Math.sin(t * 2.5) * 0.03;
+      f.bob.position.y = y + Math.sin(t * 2.5) * 0.03;
       if (f.bite >= 0) {
         f.bite = 0.001;
         audio.sfx('fuse');
         this.actionKey = '';
+        this.actionTick = 0;
       }
     } else {
       // A bite! Dip and splash; pull within the window.
       f.window += dt;
-      f.bob.position.y = -0.45 + Math.sin(t * 30) * 0.08;
-      if (f.window > 1.1) {
+      f.bob.position.y = y - 0.2 + Math.sin(t * 30) * 0.08;
+      if (f.window > 1.2) {
         f.done = true;
         this.say('Aww, it got away!');
         window.setTimeout(() => this.stopFishing(), 600);
@@ -820,7 +820,6 @@ export class CafeMode implements WorldMode {
     const f = this.fishing;
     if (!f || f.done) return;
     if (f.bite <= 0) {
-      // Too early: scares the fish off.
       f.done = true;
       this.say('Too soon! The fish swam off.');
       window.setTimeout(() => this.stopFishing(), 500);
@@ -831,13 +830,13 @@ export class CafeMode implements WorldMode {
     burst(this.world.scene, this.world.animators, f.bob.position.clone(), '#bfeaff', 20, 2.4);
     const profile = this.deps.profile();
     const roll = Math.random();
-    if (roll < 0.06) {
-      const rare = rollDecor(profile);
+    if (roll < 0.06 && this.data.rollDecor && this.data.grantDecor) {
+      const rare = this.data.rollDecor(profile);
       if (rare) {
-        grantDecor(profile, rare.id);
+        this.data.grantDecor(profile, rare.id);
         this.deps.save();
         this.refresh();
-        this.say(`Whoa! You fished up a ${rare.name}! It’s on the beach now.`, 6000);
+        this.say(`Whoa! You fished up a ${rare.name}! It’s on display now.`, 6000);
         audio.sfx('rainbow');
         window.setTimeout(() => this.stopFishing(), 700);
         return;
@@ -850,10 +849,10 @@ export class CafeMode implements WorldMode {
       this.say('A bottle with a Shuffle inside. Handy!');
       audio.sfx('special');
     } else {
-      const coins = 15 + Math.floor(Math.random() * 26);
-      const fishes = ['a sardine', 'a mackerel', 'a little snapper', 'a sea bream', 'a silly-looking puffer'];
+      const coins = Math.round((15 + Math.floor(Math.random() * 26)) * (1 + this.data.region * 0.25));
+      const fishes = ['a sardine', 'a mackerel', 'a little snapper', 'a sea bream', 'a silly-looking puffer', 'a sparkly trout'];
       this.gain(coins, at, `+${coins} 🐟`);
-      this.say(`Caught ${fishes[Math.floor(Math.random() * fishes.length)]}! Into the café kitchen it goes.`);
+      this.say(`Caught ${fishes[Math.floor(Math.random() * fishes.length)]}! Into the kitchen it goes.`);
     }
     window.setTimeout(() => this.stopFishing(), 700);
   }
@@ -865,9 +864,4 @@ export class CafeMode implements WorldMode {
     this.actionKey = '';
     if (this.pinned?.kind === 'pier') this.unpin(true);
   }
-}
-
-/** Sand height through the beach, for placing things on it. */
-function sandYAt(beach: Beach, x: number, z: number): number {
-  return beach.groundAt(x, z);
 }

@@ -5,7 +5,11 @@
 import { World } from './engine.js';
 import { Beach } from './beach.js';
 import { BigBeach } from './bigbeach.js';
-import { CafeDeps, CafeMode } from './cafeMode.js';
+import { PlaceDeps, PlaceMode } from './placeMode.js';
+import { RegionSite } from './region.js';
+import { THEMES } from './themes.js';
+import { placeFor } from '../game/places.js';
+import type { Site } from './site.js';
 import { FetchMode, FetchResult } from './fetch3d.js';
 import { DigFind, DigMode, DigSetup } from './dig3d.js';
 import { cafeState } from '../game/cafe.js';
@@ -16,6 +20,8 @@ export type { FetchResult, DigFind, DigSetup };
 let world: World | null = null;
 let beach: Beach | null = null;
 let bigBeach: BigBeach | null = null;
+/** Each region's site, built the first time it is visited. */
+const sites = new Map<number, Site>();
 
 /** WebGL can be missing on very old devices; the 2D versions remain. */
 export function has3d(): boolean {
@@ -43,10 +49,23 @@ export function closeWorld(): void {
   world?.close();
 }
 
-export function openCafe(profile: Profile, deps: CafeDeps): void {
+/** Opens a region's 3D place: the café beach for region 0, a themed site otherwise. */
+export function openPlace(region: number, profile: Profile, deps: PlaceDeps): void {
   const { world: w, beach: b } = ensure(profile);
+  const data = placeFor(region);
+  let site: Site = b;
+  if (region > 0) {
+    let s = sites.get(region);
+    if (!s) {
+      s = new RegionSite(w, THEMES[region - 1], data);
+      sites.set(region, s);
+    }
+    site = s;
+  }
+  site.build(data.state(profile));
+  w.setPlace(site);
   w.open(
-    new CafeMode(b, {
+    new PlaceMode(site, data, {
       ...deps,
       exit: () => {
         w.close();
