@@ -4,7 +4,7 @@
  * connection at all; updates are fetched in the background and applied on
  * the next launch.
  */
-const VERSION = 'gem-quest-v3';
+const VERSION = 'gem-quest-v4';
 const ASSETS = [
   './',
   'index.html',
@@ -16,6 +16,9 @@ const ASSETS = [
   'icon-192.png',
   'icon-512.png',
   'icon-maskable-512.png',
+  'models/characters.glb',
+  'models/nature.glb',
+  'models/buildings.glb',
 ];
 
 self.addEventListener('install', (event) => {

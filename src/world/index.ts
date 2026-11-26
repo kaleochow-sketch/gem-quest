@@ -14,6 +14,7 @@ import { FetchMode, FetchResult } from './fetch3d.js';
 import { DigFind, DigMode, DigSetup } from './dig3d.js';
 import { cafeState } from '../game/cafe.js';
 import type { Profile } from '../game/save.js';
+import { loadModels } from './assets.js';
 
 export type { FetchResult, DigFind, DigSetup };
 
@@ -51,6 +52,10 @@ export function closeWorld(): void {
 
 /** Opens a region's 3D place: the café beach for region 0, a themed site otherwise. */
 export function openPlace(region: number, profile: Profile, deps: PlaceDeps): void {
+  void loadModels().then(() => openPlaceNow(region, profile, deps));
+}
+
+function openPlaceNow(region: number, profile: Profile, deps: PlaceDeps): void {
   const { world: w, beach: b } = ensure(profile);
   const data = placeFor(region);
   let site: Site = b;
@@ -86,6 +91,10 @@ export function openPlace(region: number, profile: Profile, deps: PlaceDeps): vo
 }
 
 export function playFetch(profile: Profile, done: (r: FetchResult) => void): void {
+  void loadModels().then(() => playFetchNow(profile, done));
+}
+
+function playFetchNow(profile: Profile, done: (r: FetchResult) => void): void {
   const { world: w } = ensure(profile);
   // Fetch is played on the big beach, away from the café.
   bigBeach = bigBeach ?? new BigBeach(w);
@@ -98,6 +107,10 @@ export function playFetch(profile: Profile, done: (r: FetchResult) => void): voi
 }
 
 export function playDig(profile: Profile, setup: DigSetup, done: (found: DigFind[], bone: boolean) => void): void {
+  void loadModels().then(() => playDigNow(profile, setup, done));
+}
+
+function playDigNow(profile: Profile, setup: DigSetup, done: (found: DigFind[], bone: boolean) => void): void {
   const { world: w, beach: b } = ensure(profile);
   w.open(
     new DigMode(b, setup, (found, bone) => {

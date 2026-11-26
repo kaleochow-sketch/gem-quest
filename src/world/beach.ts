@@ -12,6 +12,7 @@ import { CafeState, DECOR, choiceOf } from '../game/cafe.js';
 import { World, TAU } from './engine.js';
 import type { Ferry, Seat, Site, Spot } from './site.js';
 import { ball, box, cyl, makePalm, makeGrass, makeRock, mat, shadowed } from './models.js';
+import { prop, signProp, useMaterial } from './props.js';
 
 /** Height of the sand at (x, z): flat beach, sloping into the sea, dunes behind. */
 export function sandY(x: number, z: number): number {
@@ -528,7 +529,16 @@ export class Beach implements Site {
     // Windows: boarded and cracked, or framed glass that glows at night.
     for (const s of [-1, 1]) {
       const wx = s * 2.1;
-      if (has('windows')) {
+      const winModel = prop(has('windows') ? 'bld_window' : 'bld_window_old');
+      if (winModel) {
+        winModel.position.set(wx, 1.3, D / 2);
+        if (has('windows')) {
+          const glassMat = new THREE.MeshStandardMaterial({ color: '#bfe6ff', roughness: 0.05, metalness: 0.1, emissive: new THREE.Color('#ffc76b'), emissiveIntensity: 0 });
+          useMaterial(winModel, 'Glass', glassMat);
+          this.glow(glassMat, 0.9);
+        }
+        shack.add(winModel);
+      } else if (has('windows')) {
         const frame = box(1.5, 1.2, 0.16, mat('#fbf7ef', 0.6));
         frame.position.set(wx, 1.9, D / 2);
         shack.add(frame);
@@ -560,7 +570,20 @@ export class Beach implements Site {
     }
 
     // Door: hanging off one hinge, or new and painted.
-    if (has('door')) {
+    const doorModel = has('door') ? prop('bld_door', { Paint: pick('door', '#7cc6f2'), Trim: fixed ? '#8a5e3c' : '#7d776d' }) : prop('bld_door_old');
+    if (doorModel && has('door')) {
+      doorModel.position.set(0, 0.3, D / 2 + 0.02);
+      doorModel.scale.set(1.4 / 1.3, 2.1 / 2.0, 1);
+      shack.add(tag(doorModel, 'door'));
+    } else if (doorModel) {
+      const pivot = new THREE.Group();
+      pivot.position.set(-0.6, 1.2, D / 2 + 0.4);
+      pivot.rotation.set(0.12, 0.9, 0.18);
+      doorModel.scale.set(1.3 / 1.2, 2.0 / 1.9, 1);
+      doorModel.position.y = -1.0;
+      pivot.add(doorModel);
+      shack.add(pivot);
+    } else if (has('door')) {
       const door = box(1.4, 2.1, 0.1, mat(pick('door', '#7cc6f2'), 0.6));
       door.position.set(0, 1.35, D / 2 + 0.02);
       const knob = ball(0.07, mat('#e8c15a', 0.3, 0.8), 8);
@@ -627,7 +650,12 @@ export class Beach implements Site {
     }
 
     // Café sign over the door.
-    if (has('sign')) {
+    const signModel = has('sign') ? signProp(pick('sign', '#ff9a8b'), signTexture('ONIGIRI CAFÉ', pick('sign', '#ff9a8b'))) : null;
+    if (signModel) {
+      signModel.scale.set(3.4 / 3.2, 0.85 / 0.8, 1);
+      signModel.position.set(0, roofY + 0.55 - 0.48, D / 2 + 0.35);
+      shack.add(tag(signModel, 'sign'));
+    } else if (has('sign')) {
       const color = pick('sign', '#ff9a8b');
       const sign = new THREE.Mesh(
         new THREE.BoxGeometry(3.4, 0.85, 0.12),
@@ -644,6 +672,15 @@ export class Beach implements Site {
       shack.add(light);
       for (let i = 0; i < 4; i++) {
         const m = new THREE.MeshStandardMaterial({ color: '#ff5a4e', roughness: 0.7, emissive: new THREE.Color('#ff9a4a'), emissiveIntensity: 0 });
+        const paper = prop('prop_lantern');
+        if (paper) {
+          // Hangs (and swings) from its hook, 0.51 above the lantern's middle.
+          paper.position.set(-3 + i * 2, roofY - 0.35 + 0.51, D / 2 + 1.25);
+          shack.add(useMaterial(paper, 'Lamp', m));
+          this.glow(m, 1.6, i === 0 ? light : undefined);
+          this.anim.add(this.swing(paper, i));
+          continue;
+        }
         const lantern = ball(0.28, m, 14);
         lantern.scale.y = 1.25;
         lantern.position.set(-3 + i * 2, roofY - 0.35, D / 2 + 1.25);
@@ -728,6 +765,13 @@ export class Beach implements Site {
     if (!has('crates')) {
       for (const [x, z, r] of [[5, -2, 0.3], [6.2, -2.8, 1], [5.6, -1, -0.5]] as const) {
         const crate = new THREE.Group();
+        const junk = prop('prop_crate_old');
+        if (junk) {
+          crate.add(junk);
+          crate.rotation.y = r;
+          add(crate, x, z);
+          continue;
+        }
         for (let k = 0; k < 4; k++) {
           if (k === 2) continue;
           const side = box(0.9, 0.1, 0.9, mat('#a88b62', 1));
@@ -761,12 +805,22 @@ export class Beach implements Site {
     if (has('deck')) {
       const deck = new THREE.Group();
       const color = pick('deck', '#c98b52');
-      for (let i = 0; i < 12; i++) {
-        const board = box(0.58, 0.12, 3, mat(color, 0.8));
-        board.position.set(-3.3 + i * 0.6, 0.3, 0);
-        deck.add(board);
+      const boards = prop('prop_deck', { Paint: color });
+      if (boards) deck.add(boards);
+      else {
+        for (let i = 0; i < 12; i++) {
+          const board = box(0.58, 0.12, 3, mat(color, 0.8));
+          board.position.set(-3.3 + i * 0.6, 0.3, 0);
+          deck.add(board);
+        }
       }
       for (const x of [-3.6, 3.6]) {
+        const railModel = prop('prop_deck_rail');
+        if (railModel) {
+          railModel.position.x = x;
+          deck.add(railModel);
+          continue;
+        }
         for (const z of [-1.3, 1.3]) {
           const post = box(0.14, 0.95, 0.14, mat('#8a5e3c', 0.9));
           post.position.set(x, 0.75, z);
@@ -781,11 +835,15 @@ export class Beach implements Site {
     if (has('counter')) {
       const counter = new THREE.Group();
       const color = pick('counter', '#ffd66b');
-      const front = box(3.2, 1.0, 0.7, mat(color, 0.7));
-      front.position.y = 0.85;
-      const top = box(3.4, 0.1, 0.9, mat('#fbf7ef', 0.4));
-      top.position.y = 1.4;
-      counter.add(front, top);
+      const counterModel = prop('prop_counter', { Paint: color });
+      if (counterModel) counter.add(counterModel);
+      else {
+        const front = box(3.2, 1.0, 0.7, mat(color, 0.7));
+        front.position.y = 0.85;
+        const top = box(3.4, 0.1, 0.9, mat('#fbf7ef', 0.4));
+        top.position.y = 1.4;
+        counter.add(front, top);
+      }
       // A row of onigiri, nori and all.
       for (let i = 0; i < 4; i++) {
         const rice = new THREE.Mesh(new THREE.ConeGeometry(0.17, 0.26, 3), mat('#ffffff', 0.8));
@@ -802,8 +860,9 @@ export class Beach implements Site {
     }
     if (has('kitchen')) {
       const k = new THREE.Group();
-      const table = box(1.2, 0.9, 0.8, mat('#c98b52', 0.8));
-      table.position.y = 0.45;
+      const tableModel = prop('prop_kitchen');
+      const table = tableModel ?? box(1.2, 0.9, 0.8, mat('#c98b52', 0.8));
+      if (!tableModel) table.position.y = 0.45;
       const cooker = cyl(0.32, 0.36, 0.5, mat('#fbfbfb', 0.3), 18);
       cooker.position.y = 1.15;
       const lid = ball(0.32, mat('#ff9a8b', 0.4), 16);
@@ -838,13 +897,24 @@ export class Beach implements Site {
       const color = pick('tables', '#8fe3c0');
       for (const [x, z] of [[-6, 0.6], [-7.6, -1.8]] as const) {
         const set = new THREE.Group();
-        const top = cyl(0.65, 0.65, 0.08, mat(color, 0.6), 20);
-        top.position.y = 0.85;
-        const leg = cyl(0.07, 0.07, 0.85, mat('#ffffff', 0.5), 8);
-        leg.position.y = 0.42;
-        set.add(top, leg);
+        const tableModel = prop('prop_table', { Paint: color });
+        if (tableModel) set.add(tableModel);
+        else {
+          const top = cyl(0.65, 0.65, 0.08, mat(color, 0.6), 20);
+          top.position.y = 0.85;
+          const leg = cyl(0.07, 0.07, 0.85, mat('#ffffff', 0.5), 8);
+          leg.position.y = 0.42;
+          set.add(top, leg);
+        }
         for (let i = 0; i < 3; i++) {
           const a = (i / 3) * TAU + 0.4;
+          const stoolModel = prop('prop_stool', { Paint: color });
+          if (stoolModel) {
+            stoolModel.position.set(Math.cos(a) * 1.05, 0, Math.sin(a) * 1.05);
+            stoolModel.rotation.y = -a;
+            set.add(stoolModel);
+            continue;
+          }
           const stool = cyl(0.25, 0.25, 0.08, mat(color, 0.6), 14);
           stool.position.set(Math.cos(a) * 1.05, 0.5, Math.sin(a) * 1.05);
           const sleg = cyl(0.05, 0.05, 0.5, mat('#ffffff', 0.5), 6);
@@ -864,16 +934,22 @@ export class Beach implements Site {
       const color = pick('parasols', '#ff9a8b');
       for (const [x, z, tilt] of [[5.2, 1.6, 0.12], [-6, 0.6, -0.1], [7.4, -0.8, 0.08]] as const) {
         const p = new THREE.Group();
-        const pole = cyl(0.05, 0.05, 2.6, mat('#ffffff', 0.4), 8);
-        pole.position.y = 1.3;
-        p.add(pole);
-        for (let i = 0; i < 8; i++) {
-          const wedge = new THREE.Mesh(
-            new THREE.ConeGeometry(1.6, 0.6, 3, 1, true, (i / 8) * TAU, TAU / 8),
-            mat(i % 2 ? color : '#ffffff', 0.7, 0, 'double'),
-          );
-          wedge.position.y = 2.7;
-          p.add(wedge);
+        const parasol = prop('prop_parasol', { Paint: color });
+        if (parasol) {
+          parasol.rotation.y = x;
+          p.add(parasol);
+        } else {
+          const pole = cyl(0.05, 0.05, 2.6, mat('#ffffff', 0.4), 8);
+          pole.position.y = 1.3;
+          p.add(pole);
+          for (let i = 0; i < 8; i++) {
+            const wedge = new THREE.Mesh(
+              new THREE.ConeGeometry(1.6, 0.6, 3, 1, true, (i / 8) * TAU, TAU / 8),
+              mat(i % 2 ? color : '#ffffff', 0.7, 0, 'double'),
+            );
+            wedge.position.y = 2.7;
+            p.add(wedge);
+          }
         }
         p.rotation.z = tilt;
         add(tag(p, 'parasols'), x, z);
@@ -1005,6 +1081,15 @@ export class Beach implements Site {
       const color = pick('loungers', '#ffd66b');
       for (const [x, z] of [[8.2, 2.2], [10.4, 1.4]] as const) {
         const l = new THREE.Group();
+        const loungerModel = prop('prop_lounger', { Paint: color });
+        if (loungerModel) {
+          l.add(loungerModel);
+          l.rotation.y = Math.PI + 0.25;
+          add(tag(l, 'loungers'), x, z);
+          this.colliders.push({ x, z: z - 0.5, r: 0.6 }, { x, z: z + 0.5, r: 0.6 });
+          this.spots.push({ kind: 'lounger', x, z, r: 1.8, key: `lounger-${x}`, at: [x, sandY(x, z) + 0.55, z], exit: [x - 1.3, z], facing: Math.PI + 0.25 });
+          continue;
+        }
         const bed = box(0.8, 0.1, 2, mat('#fbf7ef', 0.6));
         bed.position.y = 0.4;
         const back = box(0.8, 0.1, 0.9, mat('#fbf7ef', 0.6));
@@ -1026,7 +1111,13 @@ export class Beach implements Site {
     }
     if (has('tower')) {
       const t = new THREE.Group();
-      for (const [x, z] of [[-0.7, -0.7], [0.7, -0.7], [-0.7, 0.7], [0.7, 0.7]]) {
+      const towerModel = prop('prop_tower', { Paint: '#ff6b6b' });
+      const buoy = prop('prop_buoy');
+      if (towerModel && buoy) {
+        buoy.position.set(0.42, 2.82, 0.8);
+        t.add(towerModel, buoy);
+      }
+      for (const [x, z] of towerModel && buoy ? [] : [[-0.7, -0.7], [0.7, -0.7], [-0.7, 0.7], [0.7, 0.7]]) {
         const leg = cyl(0.08, 0.1, 2.4, mat('#fbf7ef', 0.6), 8);
         leg.position.set(x, 1.2, z);
         t.add(leg);
@@ -1040,20 +1131,22 @@ export class Beach implements Site {
       roof.rotation.y = Math.PI / 4;
       const ring = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.09, 8, 16), mat('#ff6b6b', 0.5));
       ring.position.set(0, 3.0, 0.77);
-      t.add(deck, hut, roof, ring);
+      if (!(towerModel && buoy)) t.add(deck, hut, roof, ring);
       add(t, -10.5, 6.4);
       this.colliders.push({ x: -10.5, z: 6.4, r: 1.05 });
       this.spots.push({ kind: 'tower', x: -10.5, z: 6.4, r: 2.3, key: 'tower', at: [-10.5, sandY(-10.5, 6.4) + 2.48, 6.6], exit: [-10.5, 4.6], facing: 0 });
     }
     if (has('bonfire')) {
       const f = new THREE.Group();
-      for (let i = 0; i < 9; i++) {
+      const pit = prop('prop_firepit');
+      if (pit) f.add(pit);
+      for (let i = 0; i < 9 && !pit; i++) {
         const a = (i / 9) * TAU;
         const stone = makeRock(0.22, '#8d8a86');
         stone.position.set(Math.cos(a) * 0.75, 0.08, Math.sin(a) * 0.75);
         f.add(stone);
       }
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < 3 && !pit; i++) {
         const log = cyl(0.09, 0.09, 1.0, mat('#7a5233', 1), 7);
         log.rotation.set(Math.PI / 2, (i / 3) * Math.PI, 0.3);
         log.position.y = 0.15;
@@ -1170,6 +1263,12 @@ export class Beach implements Site {
       }
       this.glow(bulbs, 2.4);
       for (const [x, z] of [[-7.6, 0.6], [7.6, -0.8]] as const) {
+        const pm = prop('prop_pole');
+        if (pm) {
+          pm.position.set(x, sandY(x, z), z);
+          lights.add(pm);
+          continue;
+        }
         const pole = cyl(0.05, 0.05, 2.5, mat('#8a5e3c', 0.9), 6);
         pole.position.set(x, sandY(x, z) + 1.25, z);
         lights.add(pole);

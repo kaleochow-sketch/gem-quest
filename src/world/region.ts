@@ -11,6 +11,8 @@ import * as THREE from 'three';
 import type { PlaceData, PlaceState } from '../game/places.js';
 import { World, TAU } from './engine.js';
 import { ball, box, cyl, makeGrass, makePalm, makeRock, mat, shadowed } from './models.js';
+import { model, modelNames, recolor, shadows } from './assets.js';
+import { prop, signProp, useMaterial } from './props.js';
 import type { Ferry, Seat, Site, Spot } from './site.js';
 import type { HouseStyle, MessKind, Theme } from './themes.js';
 
@@ -544,10 +546,59 @@ export class RegionSite implements Site {
     }
   }
 
+  /**
+   * A Blender tree from nature.glb ("tree_<kind>_N", 1 unit tall), coloured
+   * from the theme. Its "_crown" child sways like the simple tree's crown.
+   */
+  private modelTree(kind: Theme['trees'], h: number, seed: number): THREE.Group | null {
+    const names = modelNames(`tree_${kind}_`);
+    if (!names.length) return null;
+    const name = names[Math.abs(seed) % names.length];
+    const tree = model(name);
+    if (!tree) return null;
+    const w = this.world;
+    const [c1, c2] = this.theme.treeColors;
+    const trunk = kind === 'mesquite' ? '#6b5038' : kind === 'pine' ? '#6b4a33' : '#8a6044';
+    if (kind === 'crystal') {
+      // Glowing shards: emissive copies of the two crystal colours.
+      const glow = (color: string) => new THREE.MeshStandardMaterial({ color, emissive: new THREE.Color(color), emissiveIntensity: 0.6, roughness: 0.15, metalness: 0.1 });
+      const swap: Record<string, THREE.Material> = { Crystal: glow(c1), Crystal2: glow(c2) };
+      tree.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (!mesh.isMesh || Array.isArray(mesh.material)) return;
+        const m = swap[mesh.material.name.split('.')[0]];
+        if (m) mesh.material = m;
+      });
+    } else {
+      // Pines carry snow when the second colour is white; otherwise it's foliage.
+      const snow = kind === 'pine' && c2.toLowerCase() !== '#ffffff' ? c1 : c2;
+      recolor(tree, { Leaves: c1, Leaves2: kind === 'pine' ? c1 : c2, Snow: snow, Trunk: trunk });
+    }
+    // Trees are 1 unit tall; cacti and crystals stand a little lower, like the simple ones.
+    const s = kind === 'cactus' ? h * 0.62 : kind === 'crystal' ? h * 0.72 : h;
+    tree.scale.setScalar(s);
+    tree.rotation.y = seed * 2.39;
+    const g = new THREE.Group();
+    g.add(tree);
+    shadows(g);
+    const crown = tree.getObjectByName(`${name}_crown`);
+    if (crown) {
+      const phase = seed * 1.7;
+      this.anim.add((_dt, t) => {
+        const wind = w.windUniforms.uWind.value;
+        crown.rotation.z = Math.sin(t * 1.3 + phase) * 0.035 * wind;
+        crown.rotation.x = Math.sin(t * 0.9 + phase * 1.3) * 0.025 * wind;
+      });
+    }
+    return g;
+  }
+
   private makeTree(kind: Theme['trees'], h: number, seed: number): THREE.Group {
     const w = this.world;
     const [c1, c2] = this.theme.treeColors;
     if (kind === 'palm') return makePalm(h, ((seed % 3) - 1) * 0.2, w.windUniforms, this.anim, c1);
+    const fromModel = this.modelTree(kind, h, seed);
+    if (fromModel) return fromModel;
     const g = new THREE.Group();
     const crown = new THREE.Group();
     const phase = seed * 1.7;
@@ -809,7 +860,19 @@ export class RegionSite implements Site {
 
     // Door: hanging off its hinge, or new and painted.
     const front = this.round ? (style.tall ? 2.6 : 3.2) : HOUSE.D / 2;
-    if (has('door')) {
+    const doorModel = has('door') ? prop('bld_door', { Paint: pick('door', '#7cc6f2'), Trim: fixed ? style.trim : '#b8b2a6' }) : prop('bld_door_old');
+    if (doorModel && has('door')) {
+      doorModel.position.set(0, 0.3, front + 0.04);
+      house.add(shadowed(tag(doorModel, 'door')));
+    } else if (doorModel) {
+      // Hanging off its hinge: the model's origin is its base, so pivot about its middle.
+      const pivot = new THREE.Group();
+      pivot.position.set(-0.6, 1.15, front + 0.4);
+      pivot.rotation.set(0.12, 0.9, 0.18);
+      doorModel.position.y = -0.95;
+      pivot.add(doorModel);
+      house.add(shadowed(pivot));
+    } else if (has('door')) {
       const door = box(1.3, 2.0, 0.12, mat(pick('door', '#7cc6f2'), 0.6));
       door.position.set(0, 1.3, front + 0.04);
       const knob = ball(0.07, mat('#e8c15a', 0.3, 0.8), 8);
@@ -824,7 +887,11 @@ export class RegionSite implements Site {
     }
 
     // Sign over the door.
-    if (has('sign')) {
+    const signModel = has('sign') ? signProp(pick('sign', '#ff9a8b'), signTexture(this.theme.sign, pick('sign', '#ff9a8b'))) : null;
+    if (signModel) {
+      signModel.position.set(0, (style.tall ? 3.1 : 2.95) - 0.45, front + 0.3);
+      house.add(shadowed(tag(signModel, 'sign')));
+    } else if (has('sign')) {
       const c = pick('sign', '#ff9a8b');
       const sign = new THREE.Mesh(
         new THREE.BoxGeometry(3.2, 0.8, 0.12),
@@ -841,6 +908,14 @@ export class RegionSite implements Site {
       house.add(light);
       for (let i = 0; i < 4; i++) {
         const m = new THREE.MeshStandardMaterial({ color: this.theme.lamp, roughness: 0.6, emissive: new THREE.Color(this.theme.lamp), emissiveIntensity: 0 });
+        const post = prop('prop_lamp_post');
+        if (post) {
+          // The lantern hangs 0.4 out in front of the post.
+          post.position.set(-3 + i * 2, 0, front + 0.8);
+          house.add(shadowed(useMaterial(post, 'Lamp', m)));
+          this.glows.push({ m, power: 1.6, always: 0, flicker: false, light: i === 0 ? light : undefined });
+          continue;
+        }
         const lantern = ball(0.26, m, 14);
         lantern.scale.y = 1.25;
         lantern.position.set(-3 + i * 2, 2.45, front + 1.2);
@@ -966,7 +1041,28 @@ export class RegionSite implements Site {
     // Windows.
     for (const s of [-1, 1]) {
       const wx = s * 2.1;
-      if (has('windows')) {
+      const winModel = prop(has('windows') ? 'bld_window' : 'bld_window_old');
+      if (winModel && has('windows')) {
+        const glassMat = new THREE.MeshStandardMaterial({ color: '#bfe6ff', roughness: 0.05, metalness: 0.1, emissive: new THREE.Color('#ffc76b'), emissiveIntensity: 0 });
+        winModel.position.set(wx, 1.3, D / 2);
+        house.add(useMaterial(winModel, 'Glass', glassMat));
+        this.glows.push({ m: glassMat, power: 0.9, always: 0, flicker: false });
+        const shutters = prop('bld_shutters', { Paint: has('door') ? pick('door', style.trim) : style.trim });
+        if (shutters) {
+          shutters.position.set(wx, 1.3, D / 2);
+          house.add(shutters);
+        }
+        if (this.theme.plants === 'flowers' || this.theme.place === 'toyshop') {
+          const fb = prop('bld_flowerbox', { Paint: pick('flowers', '#ff5a6e') });
+          if (fb) {
+            fb.position.set(wx, 0.92, D / 2 + 0.3);
+            house.add(fb);
+          }
+        }
+      } else if (winModel) {
+        winModel.position.set(wx, 1.3, D / 2);
+        house.add(winModel);
+      } else if (has('windows')) {
         const frame = box(1.5, 1.2, 0.18, mat('#fbf7ef', 0.6));
         frame.position.set(wx, 1.9, D / 2);
         const glassMat = new THREE.MeshStandardMaterial({ color: '#bfe6ff', roughness: 0.05, metalness: 0.1, emissive: new THREE.Color('#ffc76b'), emissiveIntensity: 0 });
@@ -1133,7 +1229,16 @@ export class RegionSite implements Site {
         const wx = Math.sin(a) * (R + 0.02);
         const wz = Math.cos(a) * (R + 0.02);
         const win = new THREE.Group();
-        if (has('windows')) {
+        const roundModel = prop(has('windows') ? 'bld_window_round' : 'bld_window_round_old');
+        if (roundModel) {
+          roundModel.position.y = -0.55;
+          if (has('windows')) {
+            const glassMat = new THREE.MeshStandardMaterial({ color: '#bfe6ff', roughness: 0.05, metalness: 0.1, emissive: new THREE.Color('#ffc76b'), emissiveIntensity: 0 });
+            useMaterial(roundModel, 'Glass', glassMat);
+            this.glows.push({ m: glassMat, power: 0.9, always: 0, flicker: false });
+          }
+          win.add(roundModel);
+        } else if (has('windows')) {
           const glassMat = new THREE.MeshStandardMaterial({ color: '#bfe6ff', roughness: 0.05, metalness: 0.1, emissive: new THREE.Color('#ffc76b'), emissiveIntensity: 0 });
           const glass = new THREE.Mesh(new THREE.CircleGeometry(0.45, 20), glassMat);
           const frame = new THREE.Mesh(new THREE.TorusGeometry(0.47, 0.07, 8, 24), mat('#fbf7ef', 0.5));
@@ -1220,9 +1325,16 @@ export class RegionSite implements Site {
   private extras(house: THREE.Group, style: HouseStyle, has: (id: string) => boolean, top: number): void {
     if (!has('walls')) return;
     if (style.extra === 'chimney') {
-      const ch = box(0.7, 1.8, 0.7, mat(style.wall === 'stone' ? '#5a5268' : '#9a5a3d', 0.9));
-      ch.position.set(2.2, top + 0.9, -1);
-      house.add(ch);
+      const chColor = style.wall === 'stone' ? '#5a5268' : '#9a5a3d';
+      const chModel = prop('bld_chimney', { Stone: chColor });
+      if (chModel) {
+        chModel.position.set(2.2, top, -1);
+        house.add(shadowed(chModel));
+      } else {
+        const ch = box(0.7, 1.8, 0.7, mat(chColor, 0.9));
+        ch.position.set(2.2, top + 0.9, -1);
+        house.add(ch);
+      }
       const smokeMat = new THREE.MeshBasicMaterial({ color: '#e8e8ef', transparent: true, opacity: 0.5, depthWrite: false });
       const puffs = [0, 1, 2, 3].map(() => {
         const p = ball(0.25, smokeMat, 8);
@@ -1356,6 +1468,15 @@ export class RegionSite implements Site {
         break;
       }
       case 'boxes': {
+        const crate = prop('prop_crate', { Wood: color });
+        const crateLid = prop('prop_crate_lid', { Wood: color });
+        if (crate && crateLid) {
+          crate.rotation.z = (k % 2) * 0.25;
+          crateLid.position.set(0.3, 0.0, 0.4);
+          crateLid.rotation.y = 0.6;
+          g.add(crate, crateLid);
+          break;
+        }
         const b = box(0.8, 0.6, 0.8, mat(color, 0.9));
         b.position.y = 0.3;
         b.rotation.z = (k % 2) * 0.25;
@@ -1403,20 +1524,28 @@ export class RegionSite implements Site {
     if (has('deck')) {
       const deck = new THREE.Group();
       const color = pick('deck', '#c98b52');
-      for (let i = 0; i < 12; i++) {
-        const board = box(0.58, 0.12, 3, mat(color, 0.8));
-        board.position.set(-3.3 + i * 0.6, 0.3, 0);
-        deck.add(board);
+      const boards = prop('prop_deck', { Paint: color });
+      if (boards) deck.add(boards);
+      else {
+        for (let i = 0; i < 12; i++) {
+          const board = box(0.58, 0.12, 3, mat(color, 0.8));
+          board.position.set(-3.3 + i * 0.6, 0.3, 0);
+          deck.add(board);
+        }
       }
       add(tag(deck, 'deck'), 0, -2.75, 0);
     }
     if (has('counter')) {
       const counter = new THREE.Group();
-      const front = box(3.2, 1.0, 0.7, mat(pick('counter', '#ffd66b'), 0.7));
-      front.position.y = 0.85;
-      const top = box(3.4, 0.1, 0.9, mat('#fbf7ef', 0.4));
-      top.position.y = 1.4;
-      counter.add(front, top);
+      const counterModel = prop('prop_counter', { Paint: pick('counter', '#ffd66b') });
+      if (counterModel) counter.add(counterModel);
+      else {
+        const front = box(3.2, 1.0, 0.7, mat(pick('counter', '#ffd66b'), 0.7));
+        front.position.y = 0.85;
+        const top = box(3.4, 0.1, 0.9, mat('#fbf7ef', 0.4));
+        top.position.y = 1.4;
+        counter.add(front, top);
+      }
       for (let i = 0; i < 4; i++) {
         const item = ball(0.16, mat(this.theme.goods, 0.6), 12);
         item.scale.y = 0.8;
@@ -1432,8 +1561,9 @@ export class RegionSite implements Site {
     }
     if (has('kitchen')) {
       const k = new THREE.Group();
-      const table = box(1.2, 0.9, 0.8, mat('#c98b52', 0.8));
-      table.position.y = 0.45;
+      const tableModel = prop('prop_kitchen');
+      const table = tableModel ?? box(1.2, 0.9, 0.8, mat('#c98b52', 0.8));
+      if (!tableModel) table.position.y = 0.45;
       const pot = cyl(0.32, 0.36, 0.45, mat('#5a6478', 0.3, 0.6), 18);
       pot.position.y = 1.12;
       const lid = ball(0.3, mat(this.theme.goods, 0.4), 16);
@@ -1466,18 +1596,29 @@ export class RegionSite implements Site {
       const color = pick('tables', '#8fe3c0');
       for (const [x, z] of [[-6, 0.6], [-7.6, -1.8]] as const) {
         const set = new THREE.Group();
-        const top = cyl(0.65, 0.65, 0.08, mat(color, 0.6), 20);
-        top.position.y = 0.85;
-        const leg = cyl(0.07, 0.07, 0.85, mat('#ffffff', 0.5), 8);
-        leg.position.y = 0.42;
-        set.add(top, leg);
+        const tableModel = prop('prop_table', { Paint: color });
+        if (tableModel) set.add(tableModel);
+        else {
+          const top = cyl(0.65, 0.65, 0.08, mat(color, 0.6), 20);
+          top.position.y = 0.85;
+          const leg = cyl(0.07, 0.07, 0.85, mat('#ffffff', 0.5), 8);
+          leg.position.y = 0.42;
+          set.add(top, leg);
+        }
         for (let i = 0; i < 3; i++) {
           const a = (i / 3) * TAU + 0.4;
-          const stool = cyl(0.25, 0.25, 0.08, mat(color, 0.6), 14);
-          stool.position.set(Math.cos(a) * 1.05, 0.5, Math.sin(a) * 1.05);
-          const sleg = cyl(0.05, 0.05, 0.5, mat('#ffffff', 0.5), 6);
-          sleg.position.set(stool.position.x, 0.25, stool.position.z);
-          set.add(stool, sleg);
+          const stoolModel = prop('prop_stool', { Paint: color });
+          if (stoolModel) {
+            stoolModel.position.set(Math.cos(a) * 1.05, 0, Math.sin(a) * 1.05);
+            stoolModel.rotation.y = -a;
+            set.add(stoolModel);
+          } else {
+            const stool = cyl(0.25, 0.25, 0.08, mat(color, 0.6), 14);
+            stool.position.set(Math.cos(a) * 1.05, 0.5, Math.sin(a) * 1.05);
+            const sleg = cyl(0.05, 0.05, 0.5, mat('#ffffff', 0.5), 6);
+            sleg.position.set(stool.position.x, 0.25, stool.position.z);
+            set.add(stool, sleg);
+          }
           this.seats.push({ x: x + Math.cos(a) * 1.05, z: z + Math.sin(a) * 1.05, y: this.terrain(x, z) + 0.55, facing: Math.atan2(-Math.cos(a), -Math.sin(a)) });
         }
         add(tag(set, 'tables'), x, z);
@@ -1490,13 +1631,19 @@ export class RegionSite implements Site {
       if (this.theme.shade === 'parasol') {
         for (const [x, z, tilt] of [[5.2, 1.6, 0.12], [-6, 0.6, -0.1], [7.4, -0.8, 0.08]] as const) {
           const p = new THREE.Group();
-          const pole = cyl(0.05, 0.05, 2.6, mat('#ffffff', 0.4), 8);
-          pole.position.y = 1.3;
-          p.add(pole);
-          for (let i = 0; i < 8; i++) {
-            const wedge = new THREE.Mesh(new THREE.ConeGeometry(1.6, 0.6, 3, 1, true, (i / 8) * TAU, TAU / 8), mat(i % 2 ? color : '#ffffff', 0.7, 0, 'double'));
-            wedge.position.y = 2.7;
-            p.add(wedge);
+          const parasol = prop('prop_parasol', { Paint: color });
+          if (parasol) {
+            parasol.rotation.y = x;
+            p.add(parasol);
+          } else {
+            const pole = cyl(0.05, 0.05, 2.6, mat('#ffffff', 0.4), 8);
+            pole.position.y = 1.3;
+            p.add(pole);
+            for (let i = 0; i < 8; i++) {
+              const wedge = new THREE.Mesh(new THREE.ConeGeometry(1.6, 0.6, 3, 1, true, (i / 8) * TAU, TAU / 8), mat(i % 2 ? color : '#ffffff', 0.7, 0, 'double'));
+              wedge.position.y = 2.7;
+              p.add(wedge);
+            }
           }
           p.rotation.z = tilt;
           add(tag(p, 'parasols'), x, z);
@@ -1505,13 +1652,25 @@ export class RegionSite implements Site {
         // A striped awning over the porch and a canopy by the tables.
         for (const [x, z, w] of [[0, -0.9, 7.6], [-6.8, -0.6, 4]] as const) {
           const aw = new THREE.Group();
-          for (let i = 0; i < 8; i++) {
-            const stripe = box(w / 8, 0.06, 1.6, mat(i % 2 ? color : '#fbf7ef', 0.8));
-            stripe.position.set(-w / 2 + (i + 0.5) * (w / 8), 2.55, 0);
-            stripe.rotation.x = 0.25;
-            aw.add(stripe);
+          const canopy = prop('prop_awning', { Paint: color });
+          if (canopy) {
+            canopy.scale.x = w / 4;
+            aw.add(canopy);
+          } else {
+            for (let i = 0; i < 8; i++) {
+              const stripe = box(w / 8, 0.06, 1.6, mat(i % 2 ? color : '#fbf7ef', 0.8));
+              stripe.position.set(-w / 2 + (i + 0.5) * (w / 8), 2.55, 0);
+              stripe.rotation.x = 0.25;
+              aw.add(stripe);
+            }
           }
           for (const s of [-1, 1]) {
+            const pm = prop('prop_pole');
+            if (pm) {
+              pm.position.set((s * w) / 2, 0, 0.7);
+              aw.add(pm);
+              continue;
+            }
             const pole = cyl(0.05, 0.05, 2.5, mat('#6b4a33', 0.8), 6);
             pole.position.set((s * w) / 2, 1.25, 0.7);
             aw.add(pole);
@@ -1547,9 +1706,28 @@ export class RegionSite implements Site {
         const soil = box(2.2, 0.3, 0.8, mat(th.plants === 'coral' ? '#e8dcc4' : '#6b4a33', 1));
         soil.position.y = 0.15;
         bed.add(soil);
+        const kinds = modelNames(`plant_${th.plants}_`);
         for (let i = 0; i < 7; i++) {
           const x = -0.85 + i * 0.28;
           const z = (i % 2) * 0.25 - 0.12;
+          const plant = kinds.length ? model(kinds[(i + (s > 0 ? 1 : 0)) % kinds.length]) : null;
+          if (plant) {
+            // Blender plants are 1 unit tall; the bloom colour comes from the place.
+            const petal = th.plants === 'flowers' && i % 3 === 0 ? '#ffd23f' : color;
+            recolor(plant, { Petal: petal, Center: petal === '#ffd23f' ? '#c86a2a' : '#ffd23f', Berry: color, Coral: color, Cap: color });
+            if (th.plants === 'mushrooms') {
+              plant.traverse((o) => {
+                const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
+                if (m?.name?.startsWith('Cap')) m.emissive?.set(color);
+              });
+            }
+            const size = { flowers: 0.6, shrubs: 0.42, cacti: 0.55, coral: 0.55, mushrooms: 0.5 }[th.plants];
+            plant.scale.setScalar(size * (0.85 + ((i * 37) % 10) * 0.03));
+            plant.position.set(x, 0.3, z);
+            plant.rotation.y = i * 2.1;
+            bed.add(shadows(plant));
+            continue;
+          }
           if (th.plants === 'cacti') {
             const c = cyl(0.09, 0.1, 0.5 + (i % 3) * 0.15, mat('#5fae6a', 0.8), 8);
             c.position.set(x, 0.55, z);
@@ -1605,36 +1783,44 @@ export class RegionSite implements Site {
     }
     if (has('tower')) {
       const t = new THREE.Group();
-      for (const [x, z] of [[-0.7, -0.7], [0.7, -0.7], [-0.7, 0.7], [0.7, 0.7]]) {
-        const leg = cyl(0.08, 0.1, 2.4, mat('#fbf7ef', 0.6), 8);
-        leg.position.set(x, 1.2, z);
-        t.add(leg);
+      const towerModel = prop('prop_tower', { Paint: th.house.trim });
+      if (towerModel) t.add(towerModel);
+      else {
+        for (const [x, z] of [[-0.7, -0.7], [0.7, -0.7], [-0.7, 0.7], [0.7, 0.7]]) {
+          const leg = cyl(0.08, 0.1, 2.4, mat('#fbf7ef', 0.6), 8);
+          leg.position.set(x, 1.2, z);
+          t.add(leg);
+        }
+        const deck = box(1.8, 0.15, 1.8, mat('#c98b52', 0.8));
+        deck.position.y = 2.4;
+        const hut = box(1.5, 1.1, 1.5, mat(th.house.trim, 0.6));
+        hut.position.y = 3.0;
+        const roof = new THREE.Mesh(new THREE.ConeGeometry(1.3, 0.7, 4), mat('#fbf7ef', 0.6));
+        roof.position.y = 3.9;
+        roof.rotation.y = Math.PI / 4;
+        t.add(deck, hut, roof);
       }
-      const deck = box(1.8, 0.15, 1.8, mat('#c98b52', 0.8));
-      deck.position.y = 2.4;
-      const hut = box(1.5, 1.1, 1.5, mat(th.house.trim, 0.6));
-      hut.position.y = 3.0;
-      const roof = new THREE.Mesh(new THREE.ConeGeometry(1.3, 0.7, 4), mat('#fbf7ef', 0.6));
-      roof.position.y = 3.9;
-      roof.rotation.y = Math.PI / 4;
-      t.add(deck, hut, roof);
       add(t, -10.5, 6.4);
       this.colliders.push({ x: -10.5, z: 6.4, r: 1.05 });
       this.spots.push({ kind: 'tower', x: -10.5, z: 6.4, r: 2.3, key: 'tower', at: [-10.5, this.terrain(-10.5, 6.4) + 2.48, 6.6], exit: [-10.5, 4.6], facing: 0 });
     }
     if (has('bonfire')) {
       const f = new THREE.Group();
-      for (let i = 0; i < 9; i++) {
-        const a = (i / 9) * TAU;
-        const stone = makeRock(0.22, '#8d8a86');
-        stone.position.set(Math.cos(a) * 0.75, 0.08, Math.sin(a) * 0.75);
-        f.add(stone);
-      }
-      for (let i = 0; i < 3; i++) {
-        const log = cyl(0.09, 0.09, 1.0, mat('#7a5233', 1), 7);
-        log.rotation.set(Math.PI / 2, (i / 3) * Math.PI, 0.3);
-        log.position.y = 0.15;
-        f.add(log);
+      const pit = prop('prop_firepit');
+      if (pit) f.add(pit);
+      else {
+        for (let i = 0; i < 9; i++) {
+          const a = (i / 9) * TAU;
+          const stone = makeRock(0.22, '#8d8a86');
+          stone.position.set(Math.cos(a) * 0.75, 0.08, Math.sin(a) * 0.75);
+          f.add(stone);
+        }
+        for (let i = 0; i < 3; i++) {
+          const log = cyl(0.09, 0.09, 1.0, mat('#7a5233', 1), 7);
+          log.rotation.set(Math.PI / 2, (i / 3) * Math.PI, 0.3);
+          log.position.y = 0.15;
+          f.add(log);
+        }
       }
       const light = new THREE.PointLight('#ff8a3c', 0, 14, 1.5);
       light.position.y = 1;
@@ -1719,6 +1905,12 @@ export class RegionSite implements Site {
       }
       this.glows.push({ m: bulbs, power: 2.4, always: 0, flicker: false });
       for (const [x, z] of [[-7.6, 0.6], [7.6, -0.8]] as const) {
+        const pm = prop('prop_pole');
+        if (pm) {
+          pm.position.set(x, this.terrain(x, z), z);
+          lights.add(pm);
+          continue;
+        }
         const pole = cyl(0.05, 0.05, 2.5, mat('#8a5e3c', 0.9), 6);
         pole.position.set(x, this.terrain(x, z) + 1.25, z);
         lights.add(pole);

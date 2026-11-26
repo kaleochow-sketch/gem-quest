@@ -4,6 +4,8 @@
  * code, so the game still downloads as one file and works offline.
  */
 import * as THREE from 'three';
+import { model as natureModel, modelNames as natureNames, recolor as natureRecolor } from './assets.js';
+import { hasModel as hasCharModel, model as charModel, recolor as charRecolor } from './assets.js';
 
 const TAU = Math.PI * 2;
 
@@ -125,82 +127,107 @@ export function makeDog(): DogRig {
   const group = new THREE.Group();
   const bodyPivot = new THREE.Group();
   group.add(bodyPivot);
+  // The Blender-made dog (scripts/blender/characters.py), when it's loaded.
+  // Each part's origin is its pivot, so it drops into the same groups the
+  // simple shapes below use, and all the animation stays the same.
+  const modelled = ['dog_body', 'dog_head', 'dog_collar', 'dog_leg_front', 'dog_leg_back', 'dog_tail'].every(hasCharModel);
 
   // A slim, puppy-sized torso: a capsule lying front to back, so it reads
   // as a little dog from any side rather than a big ball with a bottom.
   const body = new THREE.Group();
-  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.28, 0.4, 8, 20), fur);
-  torso.rotation.x = Math.PI / 2;
-  body.add(torso);
   body.scale.set(0.9, 0.85, 1);
   body.position.set(0, 0.68, 0);
   bodyPivot.add(body);
-  // A fluffy chest.
-  const chest = ball(0.25, fur, 16);
-  chest.position.set(0, 0.72, 0.32);
-  bodyPivot.add(chest);
-
   const headPivot = new THREE.Group();
   headPivot.position.set(0, 1.02, 0.52);
   bodyPivot.add(headPivot);
-  const head = ball(0.35, fur, 22);
-  headPivot.add(head);
-  const snout = ball(0.16, fur, 14);
-  snout.scale.set(1.15, 0.85, 1);
-  snout.position.set(0, -0.08, 0.27);
-  headPivot.add(snout);
-  const nose = ball(0.06, dark, 10);
-  nose.position.set(0, -0.02, 0.42);
-  headPivot.add(nose);
-  for (const s of [-1, 1]) {
-    const eye = ball(0.048, dark, 10);
-    eye.position.set(s * 0.12, 0.06, 0.28);
-    headPivot.add(eye);
-    const glint = ball(0.015, mat('#ffffff', 0.2), 6);
-    glint.position.set(s * 0.12 + 0.015, 0.08, 0.325);
-    headPivot.add(glint);
-    const ear = ball(0.17, tan, 14);
-    ear.scale.set(0.55, 1.1, 0.8);
-    ear.position.set(s * 0.3, -0.02, -0.02);
-    ear.rotation.z = s * 0.35;
-    headPivot.add(ear);
-    const cheek = ball(0.05, pink, 8);
-    cheek.scale.set(1, 0.6, 0.4);
-    cheek.position.set(s * 0.2, -0.08, 0.26);
-    headPivot.add(cheek);
-  }
-  const tongue = ball(0.06, pink, 8);
-  tongue.scale.set(1, 0.4, 1.2);
-  tongue.position.set(0, -0.2, 0.33);
-  headPivot.add(tongue);
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.27, 0.04, 8, 20), collar);
-  ring.rotation.x = Math.PI / 2 - 0.5;
-  ring.position.set(0, 0.88, 0.42);
-  bodyPivot.add(ring);
-
-  // Legs pivot at the hip so they can swing.
   const legs: THREE.Group[] = [];
-  for (const [x, z] of [[0.15, 0.3], [-0.15, 0.3], [0.15, -0.3], [-0.15, -0.3]]) {
-    const pivot = new THREE.Group();
-    pivot.position.set(x, 0.5, z);
-    const leg = cyl(0.085, 0.075, 0.44, fur);
-    leg.position.y = -0.22;
-    const paw = ball(0.1, fur, 10);
-    paw.scale.set(1, 0.6, 1.2);
-    paw.position.set(0, -0.44, 0.03);
-    pivot.add(leg, paw);
-    bodyPivot.add(pivot);
-    legs.push(pivot);
-  }
-
+  const legSpots = [[0.15, 0.3], [-0.15, 0.3], [0.15, -0.3], [-0.15, -0.3]];
   const tailPivot = new THREE.Group();
   tailPivot.position.set(0, 0.8, -0.4);
-  const tail = ball(0.13, tan, 12);
-  tail.scale.set(0.8, 0.8, 1.6);
-  tail.position.set(0, 0.12, -0.08);
-  tailPivot.add(tail);
-  tailPivot.rotation.x = -0.7;
   bodyPivot.add(tailPivot);
+
+  if (modelled) {
+    // The body group squashes for breathing and landing; undo its resting
+    // scale so the model shows at its modelled size.
+    const torso = charModel('dog_body')!;
+    torso.scale.set(1 / 0.9, 1 / 0.85, 1);
+    body.add(torso);
+    headPivot.add(charModel('dog_head')!);
+    bodyPivot.add(charModel('dog_collar')!);
+    for (const [x, z] of legSpots) {
+      const pivot = new THREE.Group();
+      pivot.position.set(x, 0.5, z);
+      pivot.add(charModel(z > 0 ? 'dog_leg_front' : 'dog_leg_back')!);
+      bodyPivot.add(pivot);
+      legs.push(pivot);
+    }
+    // The modelled tail already points up and back, so it wags about the vertical.
+    tailPivot.add(charModel('dog_tail')!);
+  } else {
+    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.28, 0.4, 8, 20), fur);
+    torso.rotation.x = Math.PI / 2;
+    body.add(torso);
+    // A fluffy chest.
+    const chest = ball(0.25, fur, 16);
+    chest.position.set(0, 0.72, 0.32);
+    bodyPivot.add(chest);
+
+    const head = ball(0.35, fur, 22);
+    headPivot.add(head);
+    const snout = ball(0.16, fur, 14);
+    snout.scale.set(1.15, 0.85, 1);
+    snout.position.set(0, -0.08, 0.27);
+    headPivot.add(snout);
+    const nose = ball(0.06, dark, 10);
+    nose.position.set(0, -0.02, 0.42);
+    headPivot.add(nose);
+    for (const s of [-1, 1]) {
+      const eye = ball(0.048, dark, 10);
+      eye.position.set(s * 0.12, 0.06, 0.28);
+      headPivot.add(eye);
+      const glint = ball(0.015, mat('#ffffff', 0.2), 6);
+      glint.position.set(s * 0.12 + 0.015, 0.08, 0.325);
+      headPivot.add(glint);
+      const ear = ball(0.17, tan, 14);
+      ear.scale.set(0.55, 1.1, 0.8);
+      ear.position.set(s * 0.3, -0.02, -0.02);
+      ear.rotation.z = s * 0.35;
+      headPivot.add(ear);
+      const cheek = ball(0.05, pink, 8);
+      cheek.scale.set(1, 0.6, 0.4);
+      cheek.position.set(s * 0.2, -0.08, 0.26);
+      headPivot.add(cheek);
+    }
+    const tongue = ball(0.06, pink, 8);
+    tongue.scale.set(1, 0.4, 1.2);
+    tongue.position.set(0, -0.2, 0.33);
+    headPivot.add(tongue);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.27, 0.04, 8, 20), collar);
+    ring.rotation.x = Math.PI / 2 - 0.5;
+    ring.position.set(0, 0.88, 0.42);
+    bodyPivot.add(ring);
+
+    // Legs pivot at the hip so they can swing.
+    for (const [x, z] of legSpots) {
+      const pivot = new THREE.Group();
+      pivot.position.set(x, 0.5, z);
+      const leg = cyl(0.085, 0.075, 0.44, fur);
+      leg.position.y = -0.22;
+      const paw = ball(0.1, fur, 10);
+      paw.scale.set(1, 0.6, 1.2);
+      paw.position.set(0, -0.44, 0.03);
+      pivot.add(leg, paw);
+      bodyPivot.add(pivot);
+      legs.push(pivot);
+    }
+
+    const tail = ball(0.13, tan, 12);
+    tail.scale.set(0.8, 0.8, 1.6);
+    tail.position.set(0, 0.12, -0.08);
+    tailPivot.add(tail);
+    tailPivot.rotation.x = -0.7;
+  }
 
   const mouth = new THREE.Group();
   mouth.position.set(0, -0.16, 0.42);
@@ -405,6 +432,8 @@ export function makePalm(
   frondColor = '#3fae5a',
   dead = false,
 ): THREE.Group {
+  const fromModel = modelPalm(height, lean, wind, animators, frondColor, dead);
+  if (fromModel) return fromModel;
   const g = new THREE.Group();
   const trunkMat = mat(dead ? '#9b8a77' : '#a8805a', 0.95);
   const segs = 7;
@@ -500,8 +529,96 @@ export function makeGrass(
   return group;
 }
 
-/** A lumpy, flat-shaded rock. */
+/**
+ * The Blender palm (nature.glb "tree_palm_N"): trunk top at 1 unit, so it is
+ * scaled by `height`; the "_crown" child holds the fronds and sways.
+ */
+function modelPalm(
+  height: number,
+  lean: number,
+  wind: { uWind: { value: number } },
+  animators: Set<(dt: number, t: number) => void>,
+  frondColor: string,
+  dead: boolean,
+): THREE.Group | null {
+  const names = natureNames('tree_palm_');
+  if (!names.length) return null;
+  const name = names[Math.floor(Math.random() * names.length)];
+  const palm = natureModel(name);
+  if (!palm) return null;
+  const dark = new THREE.Color(frondColor).multiplyScalar(0.72);
+  natureRecolor(palm, dead
+    ? { Trunk: '#9b8a77', Trunk2: '#857563' }
+    : { Trunk: '#a8805a', Trunk2: '#8a6644', Leaves: frondColor, Leaves2: dark });
+  palm.scale.setScalar(height);
+  palm.rotation.y = Math.random() * TAU;
+  // The model already curves; a bigger lean tips the whole palm a little more.
+  const tilt = new THREE.Group();
+  tilt.rotation.z = -lean * 0.35;
+  tilt.add(palm);
+  const g = new THREE.Group();
+  g.add(tilt);
+  const crown = palm.getObjectByName(`${name}_crown`);
+  if (crown && dead) {
+    crown.visible = false;
+    const stub = cyl(0.12 / height, 0.14 / height, 0.35 / height, mat('#9b8a77', 0.95), 7);
+    stub.position.copy(crown.position);
+    stub.rotation.z = 0.6;
+    palm.add(stub);
+  }
+  shadowed(g);
+  if (crown && !dead) {
+    const phase = Math.random() * TAU;
+    animators.add((_dt, t) => {
+      const w = wind.uWind.value;
+      crown.rotation.z = Math.sin(t * 1.6 + phase) * 0.07 * w;
+      crown.rotation.x = Math.sin(t * 1.1 + phase * 1.7) * 0.05 * w;
+    });
+  }
+  return g;
+}
+
+/** Rock geometries from nature.glb, centred like the fallback (radius 1, half-height ~0.7). */
+const rockGeos: THREE.BufferGeometry[] = [];
+const rockSized = new Map<string, THREE.BufferGeometry>();
+function modelRockGeometry(r: number): THREE.BufferGeometry | null {
+  if (!rockGeos.length) {
+    for (const name of natureNames('rock_')) {
+      const o = natureModel(name);
+      let geo: THREE.BufferGeometry | null = null;
+      o?.traverse((c) => {
+        if (!geo && (c as THREE.Mesh).isMesh) geo = (c as THREE.Mesh).geometry;
+      });
+      if (!geo) continue;
+      const g = (geo as THREE.BufferGeometry).clone();
+      g.computeBoundingBox();
+      const b = g.boundingBox!;
+      const half = Math.max(b.max.x - b.min.x, b.max.z - b.min.z) / 2;
+      g.translate(-(b.min.x + b.max.x) / 2, -(b.min.y + b.max.y) / 2, -(b.min.z + b.max.z) / 2);
+      g.scale(1 / half, 1 / half, 1 / half);
+      rockGeos.push(g);
+    }
+  }
+  if (!rockGeos.length) return null;
+  const i = Math.floor(Math.random() * rockGeos.length);
+  const key = `${i}|${r.toFixed(2)}`;
+  let g = rockSized.get(key);
+  if (!g) {
+    g = rockGeos[i].clone().scale(r, r, r);
+    rockSized.set(key, g);
+  }
+  return g;
+}
+
+/** A lumpy rock: the Blender rocks when loaded, else a flat-shaded icosahedron. */
 export function makeRock(r: number, color = '#9aa0a8'): THREE.Mesh {
+  const shared = modelRockGeometry(r);
+  if (shared) {
+    // Sized in the geometry, so callers can still squash it with scale.y.
+    const rock = new THREE.Mesh(shared, mat(color, 0.95));
+    rock.rotation.y = Math.random() * TAU;
+    return shadowed(rock);
+  }
   const g = new THREE.IcosahedronGeometry(r, 1);
   const p = g.attributes.position as THREE.BufferAttribute;
   for (let i = 0; i < p.count; i++) {
@@ -720,105 +837,171 @@ export interface PersonLook {
   bottom: string;
   hat: string | null;
   band: string;
+  /** Hair colour and style; picked at random when left out. */
+  hair?: string;
+  hairStyle?: HairStyle;
+  /** The kind of hat (when `hat` is set); random when left out. */
+  hatStyle?: HatStyle;
+  shoe?: string;
 }
+
+export type HairStyle = 'short' | 'bob' | 'bun' | 'curly';
+export type HatStyle = 'sun' | 'cap' | 'beanie';
 
 const SKINS = ['#f2c9a8', '#d9a27c', '#b97f57', '#8d5a3b', '#e8b896'];
 const TOPS = ['#5fdbab', '#74c8ff', '#ffd66b', '#ff9a8b', '#c3a6f5', '#ffffff', '#3fa7a0', '#ffb36b'];
 const BOTTOMS = ['#3d5a99', '#2f3a56', '#c98b52', '#6b7790', '#3fa7a0'];
 const HATS = ['#f6d98b', '#ffffff', '#ff6b6b', null, '#74c8ff', null];
+const HAIRS = ['#2a2230', '#6b4a2b', '#c98b52', '#e8c15a', '#a0522d'];
+const HAIR_STYLES: HairStyle[] = ['short', 'bob', 'bun', 'curly'];
+const HAT_STYLES: HatStyle[] = ['sun', 'cap', 'beanie'];
+const SHOES = ['#ff6b6b', '#74c8ff', '#ffd66b', '#ffffff', '#5fdbab', '#2f3a56'];
+const pick = <T>(a: T[]): T => a[Math.floor(Math.random() * a.length)];
 
 /** A random but pleasant outfit, for beach visitors. */
 export function randomLook(): PersonLook {
-  const pick = <T>(a: T[]): T => a[Math.floor(Math.random() * a.length)];
-  return { skin: pick(SKINS), top: pick(TOPS), bottom: pick(BOTTOMS), hat: pick(HATS), band: pick(TOPS) };
+  return {
+    skin: pick(SKINS),
+    top: pick(TOPS),
+    bottom: pick(BOTTOMS),
+    hat: pick(HATS),
+    band: pick(TOPS),
+    hair: pick(HAIRS),
+    hairStyle: pick(HAIR_STYLES),
+    hatStyle: pick(HAT_STYLES),
+    shoe: pick(SHOES),
+  };
 }
 
+const PERSON_PARTS = ['person_torso', 'person_head', 'person_leg', 'person_arm'];
+
 /** A cheerful beach-goer in a sun hat, built from simple shapes. */
-export function makeThrower(look: PersonLook = { skin: '#d9a27c', top: '#5fdbab', bottom: '#3d5a99', hat: '#f6d98b', band: '#ff6b6b' }): ThrowerRig {
+export function makeThrower(look: PersonLook = { skin: '#d9a27c', top: '#5fdbab', bottom: '#3d5a99', hat: '#f6d98b', band: '#ff6b6b', hatStyle: 'sun' }): ThrowerRig {
   const skin = mat(look.skin, 0.8);
   const tee = mat(look.top, 0.8);
   const stripe = mat('#ffffff', 0.8);
   const shorts = mat(look.bottom, 0.8);
   const hatMat = mat(look.hat ?? '#f6d98b', 0.9);
   const dark = mat('#2a2230', 0.4);
+  const hairColor = look.hair ?? pick(HAIRS);
 
   const group = new THREE.Group();
   const bodyPivot = new THREE.Group();
   group.add(bodyPivot);
-
-  // Legs.
+  // The Blender-made villager (scripts/blender/characters.py), when loaded:
+  // every part's origin is its pivot (hip, shoulder, head centre), so it goes
+  // into the same groups as the simple shapes and moves the same way.
+  const modelled = PERSON_PARTS.every(hasCharModel);
   const legs: THREE.Group[] = [];
-  for (const s of [-1, 1]) {
-    const hip = new THREE.Group();
-    hip.position.set(s * 0.17, 0.85, 0);
-    const leg = cyl(0.1, 0.09, 0.8, skin, 10);
-    leg.position.y = -0.4;
-    const short = cyl(0.14, 0.13, 0.32, shorts, 10);
-    short.position.y = -0.12;
-    const shoe = ball(0.12, mat('#ffffff', 0.6), 10);
-    shoe.scale.set(1, 0.6, 1.5);
-    shoe.position.set(0, -0.82, 0.05);
-    hip.add(leg, short, shoe);
-    bodyPivot.add(hip);
-    legs.push(hip);
-  }
-  // Body: a rounded striped tee.
-  const torso = cyl(0.3, 0.33, 0.75, tee, 16);
-  torso.position.y = 1.25;
-  bodyPivot.add(torso);
-  for (let i = 0; i < 3; i++) {
-    const band = cyl(0.315 + i * 0.006, 0.315 + i * 0.006, 0.07, stripe, 16);
-    band.position.y = 1.05 + i * 0.2;
-    bodyPivot.add(band);
-  }
-  // Head with a sun hat and a friendly face.
+  const arms: THREE.Group[] = [];
   const head = new THREE.Group();
   head.position.y = 1.9;
-  const face = ball(0.27, skin, 18);
-  head.add(face);
-  for (const s of [-1, 1]) {
-    const eye = ball(0.035, dark, 8);
-    eye.position.set(s * 0.09, 0.04, 0.24);
-    const cheek = ball(0.045, mat('#ff9aa5', 0.6), 8);
-    cheek.scale.set(1, 0.6, 0.4);
-    cheek.position.set(s * 0.15, -0.05, 0.2);
-    head.add(eye, cheek);
-  }
-  const smile = new THREE.Mesh(new THREE.TorusGeometry(0.07, 0.014, 6, 12, Math.PI), dark);
-  smile.rotation.z = Math.PI;
-  smile.position.set(0, -0.06, 0.25);
-  head.add(smile);
-  if (look.hat) {
-    const brim = cyl(0.5, 0.5, 0.04, hatMat, 24);
-    brim.position.y = 0.17;
-    const crown = cyl(0.24, 0.27, 0.22, hatMat, 18);
-    crown.position.y = 0.28;
-    const ribbon = cyl(0.272, 0.272, 0.06, mat(look.band, 0.6), 18);
-    ribbon.position.y = 0.2;
-    head.add(brim, crown, ribbon);
+
+  if (modelled) {
+    bodyPivot.add(charModel('person_torso')!);
+    head.add(charModel('person_head')!);
+    // Under a hat the hair is the short cut, so it fits inside the crown.
+    const hatStyle = look.hatStyle ?? pick(HAT_STYLES);
+    const hairStyle = look.hat ? 'short' : (look.hairStyle ?? pick(HAIR_STYLES));
+    const hair = charModel(`person_hair_${hairStyle}`);
+    if (hair) head.add(hair);
+    const hat = look.hat ? charModel(`person_hat_${hatStyle}`) : null;
+    if (hat) head.add(hat);
+    for (const s of [-1, 1]) {
+      const hip = new THREE.Group();
+      hip.position.set(s * 0.17, 0.85, 0);
+      hip.add(charModel('person_leg')!);
+      bodyPivot.add(hip);
+      legs.push(hip);
+    }
+    for (const s of [-1, 1]) {
+      const shoulder = new THREE.Group();
+      shoulder.position.set(s * 0.37, 1.55, 0);
+      shoulder.add(charModel('person_arm')!);
+      shoulder.rotation.z = s * 0.15;
+      bodyPivot.add(shoulder);
+      arms.push(shoulder);
+    }
+    charRecolor(group, {
+      Skin: look.skin,
+      Top: look.top,
+      Bottom: look.bottom,
+      Hair: hairColor,
+      Hat: look.hat ?? '#f6d98b',
+      Band: look.band,
+      Shoe: look.shoe ?? pick(SHOES),
+    });
   } else {
-    // Hair instead of a hat.
-    const hair = ball(0.285, mat(['#2a2230', '#6b4a2b', '#c98b52', '#e8c15a'][Math.floor(Math.random() * 4)], 0.9), 16);
-    hair.scale.set(1, 0.75, 1);
-    hair.position.set(0, 0.1, -0.03);
-    head.add(hair);
+    // Legs.
+    for (const s of [-1, 1]) {
+      const hip = new THREE.Group();
+      hip.position.set(s * 0.17, 0.85, 0);
+      const leg = cyl(0.1, 0.09, 0.8, skin, 10);
+      leg.position.y = -0.4;
+      const short = cyl(0.14, 0.13, 0.32, shorts, 10);
+      short.position.y = -0.12;
+      const shoe = ball(0.12, mat('#ffffff', 0.6), 10);
+      shoe.scale.set(1, 0.6, 1.5);
+      shoe.position.set(0, -0.82, 0.05);
+      hip.add(leg, short, shoe);
+      bodyPivot.add(hip);
+      legs.push(hip);
+    }
+    // Body: a rounded striped tee.
+    const torso = cyl(0.3, 0.33, 0.75, tee, 16);
+    torso.position.y = 1.25;
+    bodyPivot.add(torso);
+    for (let i = 0; i < 3; i++) {
+      const band = cyl(0.315 + i * 0.006, 0.315 + i * 0.006, 0.07, stripe, 16);
+      band.position.y = 1.05 + i * 0.2;
+      bodyPivot.add(band);
+    }
+    // Head with a sun hat and a friendly face.
+    const face = ball(0.27, skin, 18);
+    head.add(face);
+    for (const s of [-1, 1]) {
+      const eye = ball(0.035, dark, 8);
+      eye.position.set(s * 0.09, 0.04, 0.24);
+      const cheek = ball(0.045, mat('#ff9aa5', 0.6), 8);
+      cheek.scale.set(1, 0.6, 0.4);
+      cheek.position.set(s * 0.15, -0.05, 0.2);
+      head.add(eye, cheek);
+    }
+    const smile = new THREE.Mesh(new THREE.TorusGeometry(0.07, 0.014, 6, 12, Math.PI), dark);
+    smile.rotation.z = Math.PI;
+    smile.position.set(0, -0.06, 0.25);
+    head.add(smile);
+    if (look.hat) {
+      const brim = cyl(0.5, 0.5, 0.04, hatMat, 24);
+      brim.position.y = 0.17;
+      const crown = cyl(0.24, 0.27, 0.22, hatMat, 18);
+      crown.position.y = 0.28;
+      const ribbon = cyl(0.272, 0.272, 0.06, mat(look.band, 0.6), 18);
+      ribbon.position.y = 0.2;
+      head.add(brim, crown, ribbon);
+    } else {
+      // Hair instead of a hat.
+      const hair = ball(0.285, mat(hairColor, 0.9), 16);
+      hair.scale.set(1, 0.75, 1);
+      hair.position.set(0, 0.1, -0.03);
+      head.add(hair);
+    }
+    // Arms pivot at the shoulder.
+    for (const s of [-1, 1]) {
+      const shoulder = new THREE.Group();
+      shoulder.position.set(s * 0.37, 1.55, 0);
+      const sleeve = ball(0.12, tee, 10);
+      const arm = cyl(0.07, 0.06, 0.62, skin, 8);
+      arm.position.y = -0.33;
+      const handMesh = ball(0.08, skin, 8);
+      handMesh.position.y = -0.66;
+      shoulder.add(sleeve, arm, handMesh);
+      shoulder.rotation.z = s * 0.15;
+      bodyPivot.add(shoulder);
+      arms.push(shoulder);
+    }
   }
   bodyPivot.add(head);
-  // Arms pivot at the shoulder.
-  const arms: THREE.Group[] = [];
-  for (const s of [-1, 1]) {
-    const shoulder = new THREE.Group();
-    shoulder.position.set(s * 0.37, 1.55, 0);
-    const sleeve = ball(0.12, tee, 10);
-    const arm = cyl(0.07, 0.06, 0.62, skin, 8);
-    arm.position.y = -0.33;
-    const handMesh = ball(0.08, skin, 8);
-    handMesh.position.y = -0.66;
-    shoulder.add(sleeve, arm, handMesh);
-    shoulder.rotation.z = s * 0.15;
-    bodyPivot.add(shoulder);
-    arms.push(shoulder);
-  }
   shadowed(group, true, false);
 
   const throwArm = arms[1];

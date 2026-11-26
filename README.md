@@ -371,3 +371,13 @@ npm run build && npx cap sync
 
 Xcode is required for the iOS target and is not currently installed on this
 machine.
+
+## 3D models (Blender)
+
+The dog, people, trees, plants, rocks, building details and furniture are
+modelled in Blender by scripts in `scripts/blender/` (`characters.py`,
+`nature.py`, `buildings.py`) and exported to `public/models/*.glb`. Rebuild
+them with `npm run models` (or `npm run models -- nature` for one file); it
+runs Blender headless (set `BLENDER=` if it isn't in /Applications). The game
+loads them before the 3D world opens (`src/world/assets.ts`) and falls back to
+simple built-in shapes if a model is missing.
