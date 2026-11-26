@@ -126,21 +126,24 @@ export function makeDog(): DogRig {
   const bodyPivot = new THREE.Group();
   group.add(bodyPivot);
 
-  const body = ball(0.42, fur, 20);
-  body.scale.set(0.95, 0.85, 1.3);
-  body.position.set(0, 0.62, 0);
+  // A slim, puppy-sized torso: a capsule lying front to back, so it reads
+  // as a little dog from any side rather than a big ball with a bottom.
+  const body = new THREE.Group();
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.28, 0.4, 8, 20), fur);
+  torso.rotation.x = Math.PI / 2;
+  body.add(torso);
+  body.scale.set(0.9, 0.85, 1);
+  body.position.set(0, 0.68, 0);
   bodyPivot.add(body);
-  // Fluffy chest and rump.
-  for (const [x, y, z, r] of [[0, 0.62, 0.42, 0.3], [0.14, 0.7, -0.4, 0.24], [-0.14, 0.7, -0.4, 0.24], [0, 0.5, 0.2, 0.3]] as const) {
-    const puff = ball(r, fur, 14);
-    puff.position.set(x, y, z);
-    bodyPivot.add(puff);
-  }
+  // A fluffy chest.
+  const chest = ball(0.25, fur, 16);
+  chest.position.set(0, 0.72, 0.32);
+  bodyPivot.add(chest);
 
   const headPivot = new THREE.Group();
-  headPivot.position.set(0, 0.98, 0.52);
+  headPivot.position.set(0, 1.02, 0.52);
   bodyPivot.add(headPivot);
-  const head = ball(0.33, fur, 20);
+  const head = ball(0.35, fur, 22);
   headPivot.add(head);
   const snout = ball(0.16, fur, 14);
   snout.scale.set(1.15, 0.85, 1);
@@ -172,26 +175,26 @@ export function makeDog(): DogRig {
   headPivot.add(tongue);
   const ring = new THREE.Mesh(new THREE.TorusGeometry(0.27, 0.04, 8, 20), collar);
   ring.rotation.x = Math.PI / 2 - 0.5;
-  ring.position.set(0, 0.84, 0.42);
+  ring.position.set(0, 0.88, 0.42);
   bodyPivot.add(ring);
 
   // Legs pivot at the hip so they can swing.
   const legs: THREE.Group[] = [];
-  for (const [x, z] of [[0.2, 0.32], [-0.2, 0.32], [0.2, -0.32], [-0.2, -0.32]]) {
+  for (const [x, z] of [[0.15, 0.3], [-0.15, 0.3], [0.15, -0.3], [-0.15, -0.3]]) {
     const pivot = new THREE.Group();
-    pivot.position.set(x, 0.46, z);
-    const leg = cyl(0.09, 0.08, 0.4, fur);
-    leg.position.y = -0.2;
+    pivot.position.set(x, 0.5, z);
+    const leg = cyl(0.085, 0.075, 0.44, fur);
+    leg.position.y = -0.22;
     const paw = ball(0.1, fur, 10);
     paw.scale.set(1, 0.6, 1.2);
-    paw.position.set(0, -0.4, 0.03);
+    paw.position.set(0, -0.44, 0.03);
     pivot.add(leg, paw);
     bodyPivot.add(pivot);
     legs.push(pivot);
   }
 
   const tailPivot = new THREE.Group();
-  tailPivot.position.set(0, 0.78, -0.55);
+  tailPivot.position.set(0, 0.8, -0.4);
   const tail = ball(0.13, tan, 12);
   tail.scale.set(0.8, 0.8, 1.6);
   tail.position.set(0, 0.12, -0.08);

@@ -526,6 +526,7 @@ export class App {
       refreshWallet: () => this.refreshWallet(),
       dog: (px) => this.renderer.dogArt(px),
       exit: () => this.show('map'),
+      places: () => this.show('build'),
       play: () => {
         this.show('map');
         this.openPreLevel(Math.min(this.profile.unlocked, TOTAL_LEVELS));

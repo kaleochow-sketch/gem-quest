@@ -48,10 +48,15 @@ export class BuildScreen {
     document.body.appendChild(this.cutscene);
   }
 
-  /** Opens on the project most worth working on; 3D places open directly. */
+  /**
+   * Opens on the project most worth working on. With only one place open it
+   * walks straight in; otherwise it shows the picker, so finished places can
+   * be revisited any time.
+   */
   enter(): void {
-    this.index = activeProject(this.deps.profile());
-    if (HAS_3D.has(this.index) && this.deps.open3d?.(this.index)) return;
+    const profile = this.deps.profile();
+    this.index = activeProject(profile);
+    if (projectsUnlocked(profile) === 1 && HAS_3D.has(this.index) && this.deps.open3d?.(this.index)) return;
     this.render();
   }
 
@@ -177,14 +182,18 @@ export class BuildScreen {
         <div class="enter3d-art">${project.steps[0].icon}<img src="${this.deps.dog(96)}" alt="" /></div>
         <strong>${project.name}</strong>
         <p>Walk around in 3D, fix it up job by job, paint it your way, and run it as a little business.</p>
-        <button class="btn btn-primary" id="enter-3d" type="button">Walk in →</button>
+        <button class="btn btn-primary" id="enter-3d" type="button">${done >= size ? 'Visit' : 'Walk in'} →</button>
       </div>`;
     const pct = Math.round((done / size) * 100);
+    const finished = done >= size;
+    const task = finished
+      ? `<div class="task task-done"><span class="task-icon">🎉</span><div class="task-body"><strong>Finished — open for business!</strong><small>Visit any time: serve customers, collect tips, repaint, relax</small></div><button class="buy-btn" id="enter-3d-2" type="button">Visit</button></div>`
+      : `<div class="task"><span class="task-icon">🚪</span><div class="task-body"><strong>${done ? 'Keep going' : 'Start restoring'}</strong><small>${size - done} jobs left</small></div><button class="buy-btn" id="enter-3d-2" type="button">Walk in</button></div>`;
     document.getElementById('build-panel')!.innerHTML = `
       <div class="build-head"><strong>${project.name}</strong><small>${done} / ${size} jobs</small></div>
       <div class="build-bar"><i style="width:${pct}%"></i></div>
-      <p class="panel-blurb">${project.blurb} It starts run-down: clean it up, repair it, paint it and open for business.</p>
-      <div class="task"><span class="task-icon">🚪</span><div class="task-body"><strong>${done ? 'Keep going' : 'Start restoring'}</strong><small>${size - done} jobs left</small></div><button class="buy-btn" id="enter-3d-2" type="button">Walk in</button></div>`;
+      <p class="panel-blurb">${project.blurb} ${finished ? 'All fixed up and yours to enjoy.' : 'It starts run-down: clean it up, repair it, paint it and open for business.'}</p>
+      ${task}`;
     document.getElementById('enter-3d-2')?.addEventListener('click', () => this.deps.open3d?.(this.index));
     document.getElementById('enter-3d')!.addEventListener('click', () => this.deps.open3d?.(this.index));
   }

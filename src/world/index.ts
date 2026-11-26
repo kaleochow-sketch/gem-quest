@@ -75,6 +75,12 @@ export function openPlace(region: number, profile: Profile, deps: PlaceDeps): vo
         w.close();
         deps.play();
       },
+      places: deps.places
+        ? () => {
+            w.close();
+            deps.places!();
+          }
+        : undefined,
     }),
   );
 }

@@ -30,6 +30,8 @@ export interface PlaceDeps {
   exit(): void;
   /** Go and earn coins. */
   play(): void;
+  /** Pick another place to visit (finished ones included). */
+  places?(): void;
   /** The last task was done. */
   finished(): void;
 }
@@ -66,6 +68,7 @@ export class PlaceMode implements WorldMode {
       <button class="icon-btn" id="w-back" type="button" aria-label="Back">←</button>
       <div class="world-title"><strong>${this.data.name}</strong><small id="w-stage"></small></div>
       <button class="icon-btn" id="w-time" type="button" aria-label="Change time of day">☀️</button>
+      ${this.deps.places ? '<button class="icon-btn" id="w-places" type="button" aria-label="Go to another place" title="Other places">🧭</button>' : ''}
       <div class="chip chip-gold"><span class="coin"></span><span id="w-coins">0</span></div>`;
     world.hud.innerHTML = `
       <div class="world-hint" id="w-hint">Tap to walk, or WASD / drag the left side like a joystick · drag the right side to look · tap a marker for a job</div>
@@ -82,6 +85,7 @@ export class PlaceMode implements WorldMode {
       </div>`;
     const $ = (id: string) => world.root.querySelector<HTMLElement>(`#${id}`)!;
     $('w-back').addEventListener('click', () => this.deps.exit());
+    world.root.querySelector('#w-places')?.addEventListener('click', () => this.deps.places?.());
     $('w-time').addEventListener('click', () => {
       const label = world.advanceTime();
       this.say(label === 'Night' ? 'Ooh, night time. Everything glows!' : `${label}! What a lovely beach.`);
