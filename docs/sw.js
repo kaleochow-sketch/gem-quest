@@ -4,18 +4,21 @@
  * connection at all; updates are fetched in the background and applied on
  * the next launch.
  */
-const VERSION = 'gem-quest-808d78441f';
+const VERSION = 'gem-quest-3af7cb8a4e';
 const ASSETS = [
   './',
   'index.html',
-  'styles.css?v=808d78441f',
-  'bundle.js?v=808d78441f',
+  'styles.css?v=3af7cb8a4e',
+  'bundle.js?v=3af7cb8a4e',
   'manifest.webmanifest',
   'icon.svg',
   'icon-180.png',
   'icon-192.png',
   'icon-512.png',
   'icon-maskable-512.png',
+  'models/characters.glb',
+  'models/nature.glb',
+  'models/buildings.glb',
 ];
 
 self.addEventListener('install', (event) => {

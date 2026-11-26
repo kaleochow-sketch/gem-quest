@@ -6,29 +6,31 @@
       name="viewport"
       content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#100b20" />
+    <meta name="theme-color" content="#ffd6b8" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="description" content="Gem Quest — a match-3 puzzle adventure across 150 levels." />
-    <title>Gem Quest</title>
+    <meta name="description" content="Matcha — a cosy match-3 puzzle adventure across 1000 levels." />
+    <title>Matcha</title>
     <link rel="manifest" href="manifest.webmanifest" />
     <!-- iOS has no manifest icon support; it needs its own tags. -->
     <link rel="apple-touch-icon" href="icon-180.png" />
     <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
     <link rel="icon" type="image/svg+xml" href="icon.svg" />
-    <meta name="apple-mobile-web-app-title" content="Gem Quest" />
+    <meta name="apple-mobile-web-app-title" content="Matcha" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="application-name" content="Gem Quest" />
-    <link rel="stylesheet" href="styles.css?v=808d78441f" />
+    <meta name="application-name" content="Matcha" />
+    <link rel="stylesheet" href="styles.css?v=3af7cb8a4e" />
   </head>
   <body>
+    <!-- Animated region scenery, painted behind every screen. -->
+    <canvas id="scenery" aria-hidden="true"></canvas>
     <div id="app">
       <!-- Level map -->
       <section class="screen" id="screen-map" data-active="true">
         <header class="topbar">
           <div class="brand">
-            <span class="brand-mark">◆</span>
-            <span class="brand-name">Gem Quest</span>
+            <span class="brand-mark">🍵</span>
+            <span class="brand-name" aria-label="Matcha"><b>Match</b><i>a</i></span>
           </div>
           <button class="icon-btn icon-btn-sm" id="btn-help" type="button" aria-label="How to play">?</button>
           <button class="icon-btn icon-btn-sm" id="btn-share" type="button" aria-label="Share">↗</button>
@@ -50,7 +52,7 @@
         <div class="install-bar" id="install-bar">
           <img src="icon-192.png" alt="" class="install-icon" />
           <div class="install-copy">
-            <strong>Install Gem Quest</strong>
+            <strong>Install Matcha</strong>
             <small id="install-hint">Full screen, works offline</small>
           </div>
           <button class="install-go" id="install-go" type="button">Install</button>
@@ -61,7 +63,9 @@
         <div class="map-scroll" id="map-scroll"></div>
         <nav class="tabbar">
           <button class="tab" data-goto="shop" type="button"><span>🛒</span>Shop</button>
+          <button class="tab" data-goto="build" type="button"><span>🏗️</span>Build<b class="tab-badge" id="build-badge" hidden>!</b></button>
           <button class="tab tab-primary" id="btn-continue" type="button">Play</button>
+          <button class="tab" data-goto="fun" type="button"><span>🎲</span>Fun<b class="tab-badge" id="fun-badge" hidden>1</b></button>
           <button class="tab" data-goto="upgrades" type="button"><span>⚙️</span>Upgrades</button>
         </nav>
       </section>
@@ -75,6 +79,28 @@
         </header>
         <div class="shop-tabs" id="shop-tabs"></div>
         <div class="panel-scroll" id="shop-body"></div>
+      </section>
+
+      <!-- Build: each region's project, fixed up with coins -->
+      <section class="screen" id="screen-build">
+        <header class="topbar">
+          <button class="icon-btn" data-goto="map" type="button">←</button>
+          <h1>Build</h1>
+          <div class="chip chip-gold"><span class="coin"></span><span id="build-coins">0</span></div>
+        </header>
+        <div class="region-strip" id="build-tabs"></div>
+        <div class="diorama" id="diorama"></div>
+        <div class="build-panel" id="build-panel"></div>
+      </section>
+
+      <!-- Fun: minigames and bonus rounds -->
+      <section class="screen" id="screen-fun">
+        <header class="topbar">
+          <button class="icon-btn" data-goto="map" type="button">←</button>
+          <h1>Fun &amp; Games</h1>
+          <div class="chip chip-gold"><span class="coin"></span><span id="fun-coins">0</span></div>
+        </header>
+        <div class="panel-scroll" id="fun-body"></div>
       </section>
 
       <!-- Leaderboard -->
@@ -120,6 +146,6 @@
         <div class="modal" id="modal"></div>
       </div>
     </div>
-    <script type="module" src="bundle.js?v=808d78441f"></script>
+    <script type="module" src="bundle.js?v=3af7cb8a4e"></script>
   </body>
 </html>
